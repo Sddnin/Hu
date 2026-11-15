@@ -1797,12 +1797,15 @@ export function TankGateGame({
     const resolveGate = (gt: GateSlot) => {
       if (!gt.item || !gt.opts) return;
       gt.answered = true;
-      // Camera nhìn theo +Z nên phía trái màn hình là +X (side = -1), phía phải màn hình là -X (side = +1)
-      const side: -1 | 1 = S.x > centerX(gt.z) ? -1 : 1;
+      // `side` theo dấu của trục X thế giới, KHỚP với cách dựng bảng cổng:
+      // bảng side = -1 nằm ở x < 0 (hiển thị opts.left), side = +1 nằm ở x > 0 (opts.right).
+      // (Camera nhìn theo +Z nên x > 0 hiện ở bên TRÁI màn hình, nhưng điều đó không ảnh
+      // hưởng việc chấm đúng/sai vì bảng và xe cùng nằm trong hệ toạ độ thế giới.)
+      const side: -1 | 1 = S.x > centerX(gt.z) ? 1 : -1;
       const ok = side === gt.correctSide;
       const chose = side < 0 ? gt.opts.left : gt.opts.right;
       const hit = gt.halves[side < 0 ? 0 : 1];
-      const hx = centerX(gt.z) - side * (HALF * 0.52);
+      const hx = centerX(gt.z) + side * (HALF * 0.52);
 
       const entry: GateLogItem = {
         cardId: gt.item.card.id,
