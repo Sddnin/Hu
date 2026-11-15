@@ -1,18 +1,56 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { AccountModal, AccountTab } from '@/components/AccountModal';
-import { AuthModal } from '@/components/AuthModal';
-import { CommunityView } from '@/components/CommunityView';
-import { DecksView } from '@/components/DecksView';
+import dynamic from 'next/dynamic';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { AccountTab } from '@/components/AccountModal';
 import { Header } from '@/components/Header';
-import { LeaderboardStreakView } from '@/components/LeaderboardStreakView';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { OfflineIndicator } from '@/components/PWAControls';
-import { PracticeArena, PracticePoolFilter } from '@/components/PracticeArena';
 import { WorkspaceToolbar } from '@/components/WorkspaceToolbar';
+import type { PracticePoolFilter } from '@/components/PracticeArena';
 import { useFlashcardStore } from '@/hooks/use-flashcard-store';
 import { AppView, PracticeMode, StudySession, getTodayDateKey } from '@/lib/types';
+
+const ScreenLoading = () => (
+  <div
+    className="mx-auto flex min-h-[45vh] max-w-7xl items-center justify-center px-4 py-12 text-sm text-slate-500 dark:text-slate-400"
+    role="status"
+    aria-live="polite"
+  >
+    Đang tải màn hình...
+  </div>
+);
+
+// Modals (and their animation runtime) are loaded only after the user opens them.
+const AccountModal = dynamic(
+  () => import('@/components/AccountModal').then((mod) => mod.AccountModal),
+  { loading: () => null }
+);
+const AuthModal = dynamic(
+  () => import('@/components/AuthModal').then((mod) => mod.AuthModal),
+  { loading: () => null }
+);
+
+// Each major screen is loaded only when the user opens that tab.
+const CommunityView = dynamic(
+  () => import('@/components/CommunityView').then((mod) => mod.CommunityView),
+  { loading: ScreenLoading }
+);
+const DecksView = dynamic(
+  () => import('@/components/DecksView').then((mod) => mod.DecksView),
+  { loading: ScreenLoading }
+);
+const LeaderboardStreakView = dynamic(
+  () =>
+    import('@/components/LeaderboardStreakView').then(
+      (mod) => mod.LeaderboardStreakView
+    ),
+  { loading: ScreenLoading }
+);
+const PracticeArena = dynamic(
+  () => import('@/components/PracticeArena').then((mod) => mod.PracticeArena),
+  { loading: ScreenLoading }
+);
 
 function computeStreakDays(sessions: StudySession[]): number {
   if (sessions.length === 0) return 0;
@@ -42,10 +80,13 @@ export default function HomePage() {
   const [activeMode, setActiveMode] = useState<PracticeMode>('flip');
   const [poolFilter, setPoolFilter] = useState<PracticePoolFilter>('all');
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalLoaded, setAuthModalLoaded] = useState(false);
+  const [accountModalLoaded, setAccountModalLoaded] = useState(false);
   const [accountModalState, setAccountModalState] = useState<{
     open: boolean;
     tab: AccountTab;
   }>({ open: false, tab: 'profile' });
+  const publicRefreshAt = useRef({ community: 0, leaderboard: 0 });
 
   const effectiveSelectedDeckId = useMemo(() => {
     if (store.decks.length === 0) return '';
@@ -68,6 +109,45 @@ export default function HomePage() {
     () => computeStreakDays(store.sessions),
     [store.sessions]
   );
+
+  // Public data is fetched on demand instead of blocking the initial workspace load.
+  useEffect(() => {
+    if (!store.hydrated) return;
+
+    const now = Date.now();
+    const refreshCooldownMs = 30_000;
+
+    if (
+      activeView === 'community' &&
+      now - publicRefreshAt.current.community >= refreshCooldownMs
+    ) {
+      publicRefreshAt.current.community = now;
+      void store.refreshCommunityDecks();
+    }
+
+    if (
+      activeView === 'leaderboard' &&
+      now - publicRefreshAt.current.leaderboard >= refreshCooldownMs
+    ) {
+      publicRefreshAt.current.leaderboard = now;
+      void store.refreshLeaderboard();
+    }
+  }, [
+    activeView,
+    store.hydrated,
+    store.refreshCommunityDecks,
+    store.refreshLeaderboard,
+  ]);
+
+  function handleOpenAuth() {
+    setAuthModalLoaded(true);
+    setAuthModalOpen(true);
+  }
+
+  function handleOpenAccount(tab: AccountTab) {
+    setAccountModalLoaded(true);
+    setAccountModalState({ open: true, tab });
+  }
 
   function handleStartPractice(
     deckId: string,
@@ -103,8 +183,8 @@ export default function HomePage() {
         authReady={store.authReady}
         syncing={store.syncing}
         syncError={store.syncError}
-        onOpenAuth={() => setAuthModalOpen(true)}
-        onOpenAccount={(tab) => setAccountModalState({ open: true, tab })}
+        onOpenAuth={handleOpenAuth}
+        onOpenAccount={handleOpenAccount}
         onSignOut={store.signOutUser}
         todayReviewedCount={todayReviewedCount}
         dailyGoal={store.dailyGoal}
@@ -140,7 +220,7 @@ export default function HomePage() {
             onToggleStar={store.toggleCardStar}
             onPublishDeckToCommunity={store.publishDeckToCommunity}
             onGoToCommunity={() => setActiveView('community')}
-            onOpenAuth={() => setAuthModalOpen(true)}
+            onOpenAuth={handleOpenAuth}
           />
         ) : activeView === 'community' ? (
           <CommunityView
@@ -156,7 +236,7 @@ export default function HomePage() {
             onStartPracticeDeck={(deckId, mode) =>
               handleStartPractice(deckId, mode || 'flip')
             }
-            onOpenAuth={() => setAuthModalOpen(true)}
+            onOpenAuth={handleOpenAuth}
           />
         ) : activeView === 'practice' ? (
           <PracticeArena
@@ -174,7 +254,7 @@ export default function HomePage() {
             onToggleStar={store.toggleCardStar}
             onRecordResults={store.recordPracticeResults}
             onSubmitLeaderboardScore={store.submitLeaderboardScore}
-            onOpenAuth={() => setAuthModalOpen(true)}
+            onOpenAuth={handleOpenAuth}
             onViewLeaderboard={() => setActiveView('leaderboard')}
             onBackToDecks={() => setActiveView('decks')}
           />
@@ -207,15 +287,17 @@ export default function HomePage() {
         onSelectView={setActiveView}
       />
 
-      <AuthModal
-        open={authModalOpen}
-        neonConfigured={store.neonConfigured}
-        onClose={() => setAuthModalOpen(false)}
-        onLogin={store.loginWithPassword}
-        onRegister={store.registerWithPassword}
-      />
+      {authModalLoaded && (
+        <AuthModal
+          open={authModalOpen}
+          neonConfigured={store.neonConfigured}
+          onClose={() => setAuthModalOpen(false)}
+          onLogin={store.loginWithPassword}
+          onRegister={store.registerWithPassword}
+        />
+      )}
 
-      {store.user && (
+      {store.user && accountModalLoaded && (
         <AccountModal
           key={`${store.user.id}_${accountModalState.tab}_${accountModalState.open}`}
           open={accountModalState.open}

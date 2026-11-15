@@ -420,47 +420,8 @@ export function useFlashcardStore() {
 
     checkSession();
 
-    async function loadPublicData() {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-      try {
-        const [commRes, lbRes] = await Promise.all([
-          fetch('/api/community', { cache: 'no-store' }),
-          fetch('/api/leaderboard?limit=40', { cache: 'no-store' }),
-        ]);
-        if (!cancelled && commRes.ok) {
-          const commData = await commRes.json();
-          if (Array.isArray(commData.decks) && commData.decks.length > 0) {
-            setCommunityDecks((prev) => {
-              const localCustom = prev.filter(
-                (p) =>
-                  p.authorId === 'local' &&
-                  !commData.decks.some((d: CommunityDeck) => d.id === p.id)
-              );
-              return [...localCustom, ...commData.decks];
-            });
-          }
-        }
-        if (!cancelled && lbRes.ok) {
-          const lbData = await lbRes.json();
-          if (Array.isArray(lbData.entries)) {
-            setLeaderboardEntries((prev) =>
-              dedupeLeaderboardEntries([...lbData.entries, ...prev])
-            );
-          }
-          if (Array.isArray(lbData.streakLeaders)) {
-            setStreakLeaders(lbData.streakLeaders);
-          }
-        }
-      } catch {
-        // Offline / fallback preserved
-      }
-    }
-
-    loadPublicData();
-
     const handleOnline = () => {
-      flushPendingSync(getLastAccountId() ?? undefined);
-      loadPublicData();
+      void flushPendingSync(getLastAccountId() ?? undefined);
     };
     window.addEventListener('online', handleOnline);
 

@@ -1,5 +1,6 @@
 'use client';
 
+import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
@@ -24,16 +25,62 @@ import {
   MODE_LABELS,
   PracticeMode,
 } from '@/lib/types';
-import { BlockBlastGame } from './practice/BlockBlastGame';
-import { FillBlankMode } from './practice/FillBlankMode';
-import { FlipMode, PracticeResultItem } from './practice/FlipMode';
-import { LearnMode } from './practice/LearnMode';
-import { MatchMode, PracticeCompletionMeta } from './practice/MatchMode';
-import { MeteorShooterGame } from './practice/MeteorShooterGame';
-import { QuizMode } from './practice/QuizMode';
-import { SpellMode } from './practice/SpellMode';
-import { TankGateGame } from './practice/TankGateGame';
-import { TestMode } from './practice/TestMode';
+import type { PracticeResultItem } from './practice/FlipMode';
+import type { PracticeCompletionMeta } from './practice/MatchMode';
+
+const ModeLoading = () => (
+  <div
+    className="flex min-h-64 items-center justify-center rounded-2xl border border-slate-200 bg-white/70 px-4 py-10 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-400"
+    role="status"
+    aria-live="polite"
+  >
+    Đang tải chế độ luyện tập...
+  </div>
+);
+
+// Keep each practice mode in its own chunk. In particular, Three.js is not
+// downloaded until the user chooses the Tank game.
+const BlockBlastGame = dynamic(
+  () => import('./practice/BlockBlastGame').then((mod) => mod.BlockBlastGame),
+  { loading: ModeLoading }
+);
+const FillBlankMode = dynamic(
+  () => import('./practice/FillBlankMode').then((mod) => mod.FillBlankMode),
+  { loading: ModeLoading }
+);
+const FlipMode = dynamic(
+  () => import('./practice/FlipMode').then((mod) => mod.FlipMode),
+  { loading: ModeLoading }
+);
+const LearnMode = dynamic(
+  () => import('./practice/LearnMode').then((mod) => mod.LearnMode),
+  { loading: ModeLoading }
+);
+const MatchMode = dynamic(
+  () => import('./practice/MatchMode').then((mod) => mod.MatchMode),
+  { loading: ModeLoading }
+);
+const MeteorShooterGame = dynamic(
+  () =>
+    import('./practice/MeteorShooterGame').then((mod) => mod.MeteorShooterGame),
+  { loading: ModeLoading }
+);
+const QuizMode = dynamic(
+  () => import('./practice/QuizMode').then((mod) => mod.QuizMode),
+  { loading: ModeLoading }
+);
+const SpellMode = dynamic(
+  () => import('./practice/SpellMode').then((mod) => mod.SpellMode),
+  { loading: ModeLoading }
+);
+const TankGateGame = dynamic(
+  () => import('./practice/TankGateGame').then((mod) => mod.TankGateGame),
+  { loading: ModeLoading }
+);
+const TestMode = dynamic(
+  () => import('./practice/TestMode').then((mod) => mod.TestMode),
+  { loading: ModeLoading }
+);
 
 export type PracticePoolFilter =
   | 'all'

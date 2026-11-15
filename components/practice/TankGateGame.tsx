@@ -2548,199 +2548,212 @@ export function TankGateGame({
         screenMode === 'count' ||
         screenMode === 'pause') && (
         <div className="pointer-events-none absolute inset-0 z-[6]">
-          <div className="absolute top-0 right-0 left-0 flex items-start justify-between gap-2 px-2.5 pt-2.5 sm:px-4 sm:pt-3">
-            <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
-              <button
-                type="button"
-                aria-label="Tạm dừng"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  simRef.current?.pauseGame();
-                }}
-                onClick={(e) => {
-                  if (e.detail === 0) simRef.current?.pauseGame();
-                }}
-                className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#8fc44a]/40 bg-[#0c1522]/95 text-[#f4efe2] transition hover:border-[#c6ff3d] hover:text-[#c6ff3d] cursor-pointer"
-              >
-                <Pause className="h-4 w-4" aria-hidden="true" />
-              </button>
-
-              <div className="flex items-center gap-2 rounded-xl border border-[#8fc44a]/35 bg-[#0c1522]/95 px-2.5 py-1.5 shadow-lg">
-                <span className="hidden text-[10px] font-extrabold tracking-widest text-[#8fc44a] sm:inline">
-                  ĐÚNG
-                </span>
-                <span className="font-mono-tabular text-base font-extrabold leading-none text-white sm:text-lg">
-                  {hudCorrect}
-                  <span className="text-xs font-semibold text-[#9fb0bf]">
-                    /{hudPassed}
-                  </span>
-                </span>
-                <span className="hidden rounded-md bg-[#8fc44a]/20 px-1.5 py-0.5 text-[10px] font-extrabold text-[#c6ff3d] md:inline">
-                  VÒNG {hudCycle}
-                </span>
-              </div>
-
-              <div className="flex flex-col rounded-xl border border-[#ffc21f]/40 bg-[#0c1522]/95 px-2.5 py-1 shadow-lg">
-                <span className="text-[8px] font-extrabold tracking-widest text-[#ffc21f]">
-                  ĐIỂM
-                </span>
-                <span className="font-mono-tabular text-sm font-extrabold leading-tight text-white sm:text-base">
-                  {hudScore}
-                </span>
-              </div>
-
-              {hudCombo >= 2 && (
-                <div
-                  className={`flex flex-col items-center rounded-xl border px-2 py-1 text-white shadow-lg ${
-                    hudCombo >= 5
-                      ? 'border-pink-200 bg-gradient-to-br from-[#ff3ea5] to-[#a3006b]'
-                      : 'border-[#ffc21f] bg-gradient-to-br from-[#ff8a00] to-[#e8232f]'
-                  }`}
+          <div className="absolute top-0 right-0 left-0 flex flex-col items-center gap-1.5 px-2.5 pt-2.5 sm:px-4 sm:pt-3">
+            {/* Hàng 1: Chỉ số bên trái & Thao tác bên phải */}
+            <div className="flex w-full items-center justify-between gap-1.5">
+              <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
+                <button
+                  type="button"
+                  aria-label="Tạm dừng"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    simRef.current?.pauseGame();
+                  }}
+                  onClick={(e) => {
+                    if (e.detail === 0) simRef.current?.pauseGame();
+                  }}
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#8fc44a]/40 bg-[#0c1522]/95 text-[#f4efe2] transition hover:border-[#c6ff3d] hover:text-[#c6ff3d] cursor-pointer sm:h-10 sm:w-10"
                 >
-                  <span className="font-mono-tabular text-sm font-extrabold leading-none">
-                    x{hudCombo}
+                  <Pause className="h-4 w-4" aria-hidden="true" />
+                </button>
+
+                <div className="flex items-center gap-1.5 rounded-xl border border-[#8fc44a]/35 bg-[#0c1522]/95 px-2.5 py-1.5 shadow-lg">
+                  <span className="hidden text-[10px] font-extrabold tracking-widest text-[#8fc44a] sm:inline">
+                    ĐÚNG
                   </span>
-                  <span className="text-[7.5px] font-extrabold tracking-wider">
-                    COMBO
+                  <span className="font-mono-tabular text-sm font-extrabold leading-none text-white sm:text-base">
+                    {hudCorrect}
+                    <span className="text-[11px] font-semibold text-[#9fb0bf]">
+                      /{hudPassed}
+                    </span>
+                  </span>
+                  <span className="rounded-md bg-[#8fc44a]/20 px-1.5 py-0.5 text-[9.5px] font-extrabold text-[#c6ff3d]">
+                    V{hudCycle}
                   </span>
                 </div>
-              )}
-            </div>
 
-            <div className="flex min-w-0 flex-1 justify-center">
-              {activeQ && (
-                <div
-                  className={`pointer-events-auto max-w-[min(52vw,420px)] rounded-2xl border bg-[#09121e]/95 px-3 py-1.5 text-center shadow-2xl transition-colors sm:px-5 sm:py-2 ${
-                    activeQ.feedback === 'correct'
-                      ? 'border-[#3ddc84]'
-                      : activeQ.feedback === 'wrong'
-                        ? 'border-[#ff3b46]'
-                        : 'border-[#ffc21f]/50'
-                  }`}
+                <div className="flex items-center gap-1 rounded-xl border border-[#ffc21f]/40 bg-[#0c1522]/95 px-2.5 py-1.5 shadow-lg">
+                  <span className="hidden text-[9px] font-extrabold tracking-widest text-[#ffc21f] sm:inline">
+                    ĐIỂM
+                  </span>
+                  <span className="font-mono-tabular text-sm font-extrabold leading-none text-[#ffc21f] sm:text-base sm:text-white">
+                    {hudScore}
+                  </span>
+                </div>
+
+                {hudCombo >= 2 && (
+                  <div
+                    className={`flex items-center gap-0.5 rounded-xl border px-2 py-1 text-white shadow-lg ${
+                      hudCombo >= 5
+                        ? 'border-pink-200 bg-gradient-to-br from-[#ff3ea5] to-[#a3006b]'
+                        : 'border-[#ffc21f] bg-gradient-to-br from-[#ff8a00] to-[#e8232f]'
+                    }`}
+                  >
+                    <span className="font-mono-tabular text-xs font-extrabold leading-none sm:text-sm">
+                      x{hudCombo}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
+                <button
+                  type="button"
+                  title="Đổi chiều câu hỏi trên cổng"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleToggleDirection();
+                  }}
+                  onClick={(e) => {
+                    if (e.detail === 0) handleToggleDirection();
+                  }}
+                  className="hidden h-9 items-center gap-1 rounded-xl border border-[#39e0ff]/40 bg-[#0c1522]/95 px-2.5 text-[10px] font-extrabold text-[#39e0ff] hover:border-[#39e0ff] sm:inline-flex cursor-pointer"
                 >
-                  <div className="flex items-center justify-center gap-1.5 text-[9px] font-extrabold tracking-wider">
-                    <span className="rounded bg-gradient-to-r from-[#39e0ff] to-[#2f7dff] px-1.5 py-0.5 text-[#04121f]">
-                      {activeQ.dirLabel}
-                    </span>
-                    <em className="hidden truncate not-italic text-[#ffc21f] sm:inline">
-                      HÚC CỔNG ĐÚNG NGHĨA
-                    </em>
-                  </div>
-                  <div className="mt-0.5 flex items-center justify-center gap-1.5">
-                    <span className="truncate font-display text-lg font-extrabold leading-tight text-white sm:text-2xl">
-                      {activeQ.question}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`Phát âm ${activeQ.term}`}
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        safeSpeak(activeQ.term);
-                      }}
-                      onClick={(e) => {
-                        if (e.detail === 0) safeSpeak(activeQ.term);
-                      }}
-                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-[#39e0ff] hover:bg-white/20 cursor-pointer"
-                    >
-                      <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
-                  </div>
-                  {activeQ.hint && (
-                    <div className="truncate text-[10px] text-[#9fb0bf]">
-                      {activeQ.hint}
-                    </div>
+                  <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>
+                    {direction === 'term_to_meaning' ? 'TỪ→NGHĨA' : 'NGHĨA→TỪ'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  aria-label="Bật/tắt âm thanh"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleToggleSound();
+                  }}
+                  onClick={(e) => {
+                    if (e.detail === 0) handleToggleSound();
+                  }}
+                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-[#8fc44a]/35 bg-[#0c1522]/95 text-[#f4efe2] hover:border-[#c6ff3d] cursor-pointer sm:h-10 sm:w-10"
+                >
+                  {soundOn ? (
+                    <Volume2 className="h-4 w-4 text-[#c6ff3d]" aria-hidden="true" />
+                  ) : (
+                    <VolumeX className="h-4 w-4 text-[#9fb0bf]" aria-hidden="true" />
                   )}
+                </button>
+
+                <button
+                  type="button"
+                  aria-label={expanded ? 'Thu nhỏ màn hình' : 'Toàn màn hình'}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setExpanded((v) => !v);
+                  }}
+                  onClick={(e) => {
+                    if (e.detail === 0) setExpanded((v) => !v);
+                  }}
+                  className="hidden h-10 w-10 items-center justify-center rounded-xl border border-white/15 bg-[#0c1522]/95 text-[#f4efe2] hover:border-[#39e0ff] sm:flex cursor-pointer"
+                >
+                  {expanded ? (
+                    <Minimize2 className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Maximize2 className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    simRef.current?.endGame();
+                  }}
+                  onClick={(e) => {
+                    if (e.detail === 0) simRef.current?.endGame();
+                  }}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[#c6ff3d]/55 bg-[#4f7a2e]/95 px-2.5 text-xs font-extrabold text-white shadow-lg transition hover:bg-[#5e9238] cursor-pointer whitespace-nowrap sm:h-10 sm:px-3"
+                >
+                  <Flag className="h-3.5 w-3.5 text-[#c6ff3d]" aria-hidden="true" />
+                  <span className="hidden sm:inline">Kết thúc & Lưu</span>
+                  <span className="sm:hidden">Lưu</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Hàng 2: Thẻ câu hỏi ở giữa, tách biệt hoàn toàn với thanh chỉ số */}
+            {activeQ && (
+              <div
+                className={`pointer-events-auto w-fit max-w-[92%] sm:max-w-[440px] rounded-2xl border bg-[#09121e]/95 px-3.5 py-1.5 text-center shadow-2xl transition-colors sm:px-5 sm:py-2 ${
+                  activeQ.feedback === 'correct'
+                    ? 'border-[#3ddc84]'
+                    : activeQ.feedback === 'wrong'
+                      ? 'border-[#ff3b46]'
+                      : 'border-[#ffc21f]/50'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-1.5 text-[9px] font-extrabold tracking-wider">
+                  <button
+                    type="button"
+                    title="Chạm để đổi chiều câu hỏi"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleToggleDirection();
+                    }}
+                    onClick={(e) => {
+                      if (e.detail === 0) handleToggleDirection();
+                    }}
+                    className="inline-flex items-center gap-1 rounded bg-gradient-to-r from-[#39e0ff] to-[#2f7dff] px-1.5 py-0.5 text-[#04121f] cursor-pointer"
+                  >
+                    <span>{activeQ.dirLabel}</span>
+                    <ArrowLeftRight className="h-2.5 w-2.5 sm:hidden" aria-hidden="true" />
+                  </button>
+                  <em className="hidden truncate not-italic text-[#ffc21f] sm:inline">
+                    HÚC CỔNG ĐÚNG NGHĨA
+                  </em>
                 </div>
-              )}
-            </div>
-
-            <div className="pointer-events-auto flex items-center gap-1.5 sm:gap-2">
-              <button
-                type="button"
-                title="Đổi chiều câu hỏi trên cổng"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleToggleDirection();
-                }}
-                onClick={(e) => {
-                  if (e.detail === 0) handleToggleDirection();
-                }}
-                className="hidden h-9 items-center gap-1 rounded-xl border border-[#39e0ff]/40 bg-[#0c1522]/95 px-2.5 text-[10px] font-extrabold text-[#39e0ff] hover:border-[#39e0ff] sm:inline-flex cursor-pointer"
-              >
-                <ArrowLeftRight className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>
-                  {direction === 'term_to_meaning' ? 'TỪ→NGHĨA' : 'NGHĨA→TỪ'}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                aria-label="Bật/tắt âm thanh"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  handleToggleSound();
-                }}
-                onClick={(e) => {
-                  if (e.detail === 0) handleToggleSound();
-                }}
-                className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#8fc44a]/35 bg-[#0c1522]/95 text-[#f4efe2] hover:border-[#c6ff3d] cursor-pointer"
-              >
-                {soundOn ? (
-                  <Volume2 className="h-4 w-4 text-[#c6ff3d]" aria-hidden="true" />
-                ) : (
-                  <VolumeX className="h-4 w-4 text-[#9fb0bf]" aria-hidden="true" />
+                <div className="mt-0.5 flex items-center justify-center gap-1.5">
+                  <span className="truncate font-display text-lg font-extrabold leading-tight text-white sm:text-2xl">
+                    {activeQ.question}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Phát âm ${activeQ.term}`}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      safeSpeak(activeQ.term);
+                    }}
+                    onClick={(e) => {
+                      if (e.detail === 0) safeSpeak(activeQ.term);
+                    }}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-[#39e0ff] hover:bg-white/20 cursor-pointer"
+                  >
+                    <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
+                {activeQ.hint && (
+                  <div className="truncate text-[10px] text-[#9fb0bf]">
+                    {activeQ.hint}
+                  </div>
                 )}
-              </button>
+              </div>
+            )}
 
-              <button
-                type="button"
-                aria-label={expanded ? 'Thu nhỏ màn hình' : 'Toàn màn hình'}
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setExpanded((v) => !v);
-                }}
-                onClick={(e) => {
-                  if (e.detail === 0) setExpanded((v) => !v);
-                }}
-                className="hidden h-10 w-10 items-center justify-center rounded-xl border border-white/15 bg-[#0c1522]/95 text-[#f4efe2] hover:border-[#39e0ff] sm:flex cursor-pointer"
-              >
-                {expanded ? (
-                  <Minimize2 className="h-4 w-4" aria-hidden="true" />
-                ) : (
-                  <Maximize2 className="h-4 w-4" aria-hidden="true" />
-                )}
-              </button>
-
-              <button
-                type="button"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  simRef.current?.endGame();
-                }}
-                onClick={(e) => {
-                  if (e.detail === 0) simRef.current?.endGame();
-                }}
-                className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-[#c6ff3d]/55 bg-[#4f7a2e]/90 px-3 text-xs font-extrabold text-white shadow-lg transition hover:bg-[#5e9238] cursor-pointer whitespace-nowrap"
-              >
-                <Flag className="h-3.5 w-3.5 text-[#c6ff3d]" aria-hidden="true" />
-                <span className="hidden sm:inline">Kết thúc & Lưu</span>
-                <span className="sm:hidden">Lưu</span>
-              </button>
+            {/* Hàng 3: Khoảng cách tới cổng */}
+            <div
+              className={`pointer-events-none rounded-full bg-[#060b12]/80 px-3 py-0.5 font-mono-tabular text-[10px] font-extrabold tracking-widest text-[#f4efe2]/85 transition-opacity ${
+                showGateHint ? 'opacity-100' : 'opacity-0'
+              }`}
+            >
+              <span ref={gateHintTextRef}>CỔNG 1 · VÒNG 1</span>
             </div>
-          </div>
-
-          <div
-            className={`pointer-events-none absolute top-[82px] left-1/2 -translate-x-1/2 rounded-full bg-[#060b12]/80 px-3 py-0.5 font-mono-tabular text-[10px] font-extrabold tracking-widest text-[#f4efe2]/85 transition-opacity sm:top-[92px] ${
-              showGateHint ? 'opacity-100' : 'opacity-0'
-            }`}
-          >
-            <span ref={gateHintTextRef}>CỔNG 1 · VÒNG 1</span>
           </div>
 
           <div className="pointer-events-none absolute inset-0">
