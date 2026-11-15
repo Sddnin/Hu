@@ -25,8 +25,9 @@ const LS_CARDS = 'lexicard_cards_v1';
 const LS_SESSIONS = 'lexicard_sessions_v1';
 const LS_GOAL = 'lexicard_goal_v1';
 const LS_THEME = 'lexicard_theme';
-const LS_ACCOUNT_CACHE = 'lexicard_account_cache_v1';
-const LS_PENDING_SYNC = 'lexicard_pending_sync_v1';
+const LS_ACCOUNT_CACHE_PREFIX = 'lexicard_account_cache_v1_';
+const LS_LAST_ACCOUNT_ID = 'lexicard_last_account_id_v1';
+const LS_PENDING_SYNC_PREFIX = 'lexicard_pending_sync_v1_';
 const LS_COMMUNITY = 'lexicard_community_v1';
 const LS_LEADERBOARD = 'lexicard_leaderboard_v1';
 
@@ -46,12 +47,35 @@ interface AccountCacheSnapshot {
   cachedAt: number;
 }
 
-function readAccountCache(): AccountCacheSnapshot | null {
+function getLastAccountId(): string | null {
   try {
-    const raw = localStorage.getItem(LS_ACCOUNT_CACHE);
+    const raw = localStorage.getItem(LS_LAST_ACCOUNT_ID);
+    return raw && raw.trim() ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function setLastAccountId(userId: string | null) {
+  try {
+    if (!userId) {
+      localStorage.removeItem(LS_LAST_ACCOUNT_ID);
+    } else {
+      localStorage.setItem(LS_LAST_ACCOUNT_ID, userId);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function readAccountCache(targetUserId?: string | null): AccountCacheSnapshot | null {
+  try {
+    const uid = targetUserId ?? getLastAccountId();
+    if (!uid) return null;
+    const raw = localStorage.getItem(`${LS_ACCOUNT_CACHE_PREFIX}${uid}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AccountCacheSnapshot;
-    if (!parsed || !parsed.user?.id) return null;
+    if (!parsed || !parsed.user?.id || parsed.user.id !== uid) return null;
     return parsed;
   } catch {
     return null;
@@ -60,23 +84,22 @@ function readAccountCache(): AccountCacheSnapshot | null {
 
 function writeAccountCache(snapshot: AccountCacheSnapshot) {
   try {
-    localStorage.setItem(LS_ACCOUNT_CACHE, JSON.stringify(snapshot));
+    if (!snapshot.user?.id) return;
+    localStorage.setItem(
+      `${LS_ACCOUNT_CACHE_PREFIX}${snapshot.user.id}`,
+      JSON.stringify(snapshot)
+    );
+    setLastAccountId(snapshot.user.id);
   } catch {
     // Ignore quota errors
   }
 }
 
-function clearAccountCache() {
+function readPendingQueue(userId?: string | null): PendingSyncItem[] {
   try {
-    localStorage.removeItem(LS_ACCOUNT_CACHE);
-  } catch {
-    // Ignore
-  }
-}
-
-function readPendingQueue(): PendingSyncItem[] {
-  try {
-    const raw = localStorage.getItem(LS_PENDING_SYNC);
+    const uid = userId ?? getLastAccountId();
+    if (!uid) return [];
+    const raw = localStorage.getItem(`${LS_PENDING_SYNC_PREFIX}${uid}`);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
@@ -85,16 +108,42 @@ function readPendingQueue(): PendingSyncItem[] {
   }
 }
 
-function writePendingQueue(queue: PendingSyncItem[]) {
+function writePendingQueue(userId: string | null, queue: PendingSyncItem[]) {
   try {
+    const uid = userId ?? getLastAccountId();
+    if (!uid) return;
+    const key = `${LS_PENDING_SYNC_PREFIX}${uid}`;
     if (queue.length === 0) {
-      localStorage.removeItem(LS_PENDING_SYNC);
+      localStorage.removeItem(key);
     } else {
-      localStorage.setItem(LS_PENDING_SYNC, JSON.stringify(queue));
+      localStorage.setItem(key, JSON.stringify(queue));
     }
   } catch {
     // Ignore quota errors
   }
+}
+
+function compareLeaderboardEntries(a: LeaderboardEntry, b: LeaderboardEntry): number {
+  return (
+    b.score - a.score ||
+    b.accuracy - a.accuracy ||
+    a.durationSeconds - b.durationSeconds ||
+    b.createdAt - a.createdAt
+  );
+}
+
+function dedupeLeaderboardEntries(list: LeaderboardEntry[]): LeaderboardEntry[] {
+  const sorted = [...list].sort(compareLeaderboardEntries);
+  const seen = new Set<string>();
+  const deduped: LeaderboardEntry[] = [];
+  for (const item of sorted) {
+    const playerKey = item.userId || item.playerName.trim().toLowerCase();
+    const key = `${playerKey}__${item.deckId}__${item.mode}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+  }
+  return deduped;
 }
 
 function clampString(val: string, max: number): string {
@@ -169,54 +218,64 @@ export function useFlashcardStore() {
 
   const enqueuePendingSync = useCallback(
     (item: Omit<PendingSyncItem, 'id' | 'createdAt'>) => {
+      const uid = user?.id ?? getLastAccountId();
+      if (!uid) return;
       const next = [
-        ...readPendingQueue(),
+        ...readPendingQueue(uid),
         {
           ...item,
           id: createUniqueId('sync'),
           createdAt: Date.now(),
         },
       ];
-      writePendingQueue(next);
+      writePendingQueue(uid, next);
       setPendingSyncCount(next.length);
     },
-    []
+    [user]
   );
 
-  const flushPendingSync = useCallback(async () => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-    const queue = readPendingQueue();
-    if (queue.length === 0) {
-      setPendingSyncCount(0);
-      return;
-    }
+  const flushPendingSync = useCallback(
+    async (targetUserId?: string) => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      const uid = targetUserId ?? user?.id ?? getLastAccountId();
+      if (!uid) {
+        setPendingSyncCount(0);
+        return;
+      }
+      const queue = readPendingQueue(uid);
+      if (queue.length === 0) {
+        setPendingSyncCount(0);
+        return;
+      }
 
-    setSyncing(true);
-    const remaining: PendingSyncItem[] = [];
-    for (let i = 0; i < queue.length; i++) {
-      const item = queue[i];
-      try {
-        const res = await fetch(item.url, {
-          method: item.method,
-          headers:
-            item.body !== undefined
-              ? { 'Content-Type': 'application/json' }
-              : undefined,
-          body: item.body !== undefined ? JSON.stringify(item.body) : undefined,
-        });
-        if (!res.ok && res.status >= 500) {
+      setSyncing(true);
+      const remaining: PendingSyncItem[] = [];
+      for (let i = 0; i < queue.length; i++) {
+        const item = queue[i];
+        try {
+          const res = await fetch(item.url, {
+            method: item.method,
+            headers:
+              item.body !== undefined
+                ? { 'Content-Type': 'application/json' }
+                : undefined,
+            body: item.body !== undefined ? JSON.stringify(item.body) : undefined,
+          });
+          if (!res.ok && res.status >= 500) {
+            remaining.push(...queue.slice(i));
+            break;
+          }
+        } catch {
           remaining.push(...queue.slice(i));
           break;
         }
-      } catch {
-        remaining.push(...queue.slice(i));
-        break;
       }
-    }
-    writePendingQueue(remaining);
-    setPendingSyncCount(remaining.length);
-    setSyncing(false);
-  }, []);
+      writePendingQueue(uid, remaining);
+      setPendingSyncCount(remaining.length);
+      setSyncing(false);
+    },
+    [user]
+  );
 
   const syncMutation = useCallback(
     async (
@@ -275,10 +334,11 @@ export function useFlashcardStore() {
         if (typeof cachedAccount.user.dailyGoal === 'number') {
           setDailyGoal(cachedAccount.user.dailyGoal);
         }
+        setPendingSyncCount(readPendingQueue(cachedAccount.user.id).length);
       } else {
         loadLocalGuestSnapshot();
+        setPendingSyncCount(0);
       }
-      setPendingSyncCount(readPendingQueue().length);
 
       try {
         const rawComm = localStorage.getItem(LS_COMMUNITY);
@@ -300,7 +360,9 @@ export function useFlashcardStore() {
         const rawLb = localStorage.getItem(LS_LEADERBOARD);
         if (rawLb) {
           const parsed = JSON.parse(rawLb);
-          if (Array.isArray(parsed)) setLeaderboardEntries(parsed);
+          if (Array.isArray(parsed)) {
+            setLeaderboardEntries(dedupeLeaderboardEntries(parsed));
+          }
         }
       } catch {
         // Ignore
@@ -342,10 +404,9 @@ export function useFlashcardStore() {
             sessions: nextSessions,
             cachedAt: Date.now(),
           });
-          await flushPendingSync();
+          await flushPendingSync(data.user.id);
         } else {
-          clearAccountCache();
-          writePendingQueue([]);
+          setLastAccountId(null);
           setPendingSyncCount(0);
           setUser(null);
           loadLocalGuestSnapshot();
@@ -382,18 +443,9 @@ export function useFlashcardStore() {
         if (!cancelled && lbRes.ok) {
           const lbData = await lbRes.json();
           if (Array.isArray(lbData.entries)) {
-            setLeaderboardEntries((prev) => {
-              const serverIds = new Set(
-                lbData.entries.map((e: LeaderboardEntry) => e.id)
-              );
-              const localOnly = prev.filter((e) => !serverIds.has(e.id));
-              return [...lbData.entries, ...localOnly].sort(
-                (a, b) =>
-                  b.score - a.score ||
-                  b.accuracy - a.accuracy ||
-                  a.durationSeconds - b.durationSeconds
-              );
-            });
+            setLeaderboardEntries((prev) =>
+              dedupeLeaderboardEntries([...lbData.entries, ...prev])
+            );
           }
           if (Array.isArray(lbData.streakLeaders)) {
             setStreakLeaders(lbData.streakLeaders);
@@ -407,7 +459,7 @@ export function useFlashcardStore() {
     loadPublicData();
 
     const handleOnline = () => {
-      flushPendingSync();
+      flushPendingSync(getLastAccountId() ?? undefined);
       loadPublicData();
     };
     window.addEventListener('online', handleOnline);
@@ -479,14 +531,25 @@ export function useFlashcardStore() {
           };
         }
 
+        const nextDecks = Array.isArray(data.decks) ? data.decks : [];
+        const nextCards = Array.isArray(data.cards) ? data.cards : [];
+        const nextSessions = Array.isArray(data.sessions) ? data.sessions : [];
         setNeonConfigured(true);
         setUser(data.user);
-        setDecks(Array.isArray(data.decks) ? data.decks : []);
-        setCards(Array.isArray(data.cards) ? data.cards : []);
-        setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+        setDecks(nextDecks);
+        setCards(nextCards);
+        setSessions(nextSessions);
         if (typeof data.user?.dailyGoal === 'number') {
           setDailyGoal(data.user.dailyGoal);
         }
+        writeAccountCache({
+          user: data.user,
+          decks: nextDecks,
+          cards: nextCards,
+          sessions: nextSessions,
+          cachedAt: Date.now(),
+        });
+        setPendingSyncCount(readPendingQueue(data.user?.id).length);
         return { ok: true };
       } catch {
         return { ok: false, error: 'Không thể kết nối tới máy chủ.' };
@@ -531,14 +594,25 @@ export function useFlashcardStore() {
           };
         }
 
+        const nextDecks = Array.isArray(data.decks) ? data.decks : [];
+        const nextCards = Array.isArray(data.cards) ? data.cards : [];
+        const nextSessions = Array.isArray(data.sessions) ? data.sessions : [];
         setNeonConfigured(true);
         setUser(data.user);
-        setDecks(Array.isArray(data.decks) ? data.decks : []);
-        setCards(Array.isArray(data.cards) ? data.cards : []);
-        setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+        setDecks(nextDecks);
+        setCards(nextCards);
+        setSessions(nextSessions);
         if (typeof data.user?.dailyGoal === 'number') {
           setDailyGoal(data.user.dailyGoal);
         }
+        writeAccountCache({
+          user: data.user,
+          decks: nextDecks,
+          cards: nextCards,
+          sessions: nextSessions,
+          cachedAt: Date.now(),
+        });
+        setPendingSyncCount(0);
         return { ok: true };
       } catch {
         return { ok: false, error: 'Không thể kết nối tới máy chủ.' };
@@ -556,8 +630,7 @@ export function useFlashcardStore() {
     } catch {
       // Ignore network errors on logout
     }
-    clearAccountCache();
-    writePendingQueue([]);
+    setLastAccountId(null);
     setPendingSyncCount(0);
     setUser(null);
     loadLocalGuestSnapshot();
@@ -1452,18 +1525,9 @@ export function useFlashcardStore() {
         if (!res.ok) return;
         const data = await res.json();
         if (Array.isArray(data.entries)) {
-          setLeaderboardEntries((prev) => {
-            const serverIds = new Set(
-              data.entries.map((e: LeaderboardEntry) => e.id)
-            );
-            const localOnly = prev.filter((e) => !serverIds.has(e.id));
-            return [...data.entries, ...localOnly].sort(
-              (a, b) =>
-                b.score - a.score ||
-                b.accuracy - a.accuracy ||
-                a.durationSeconds - b.durationSeconds
-            );
-          });
+          setLeaderboardEntries((prev) =>
+            dedupeLeaderboardEntries([...data.entries, ...prev])
+          );
         }
         if (Array.isArray(data.streakLeaders)) {
           setStreakLeaders(data.streakLeaders);
@@ -1512,14 +1576,7 @@ export function useFlashcardStore() {
       };
 
       setLeaderboardEntries((prev) =>
-        [entry, ...prev]
-          .sort(
-            (a, b) =>
-              b.score - a.score ||
-              b.accuracy - a.accuracy ||
-              a.durationSeconds - b.durationSeconds
-          )
-          .slice(0, 100)
+        dedupeLeaderboardEntries([entry, ...prev]).slice(0, 100)
       );
 
       if (neonConfigured) {

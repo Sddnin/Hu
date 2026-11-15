@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ensureNeonSchema, getDb, isNeonConfigured } from '@/db';
 import { communityDecks } from '@/db/schema';
 import { getAuthenticatedUserId } from '@/lib/auth';
+import { deleteCommunityDeckBlob } from '@/lib/blob';
 
 export async function POST(
   _req: NextRequest,
@@ -58,13 +59,20 @@ export async function DELETE(
       .where(
         and(eq(communityDecks.id, id), eq(communityDecks.authorUserId, userId))
       )
-      .returning({ id: communityDecks.id });
+      .returning({
+        id: communityDecks.id,
+        blobUrl: communityDecks.blobUrl,
+      });
 
     if (deleted.length === 0) {
       return NextResponse.json(
         { error: 'Không tìm thấy hoặc bạn không có quyền gỡ bộ thẻ này.' },
         { status: 404 }
       );
+    }
+
+    if (deleted[0]?.blobUrl) {
+      await deleteCommunityDeckBlob(deleted[0].blobUrl);
     }
 
     return NextResponse.json({ ok: true });

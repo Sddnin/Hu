@@ -1,21 +1,35 @@
 import crypto from 'node:crypto';
-import { desc, eq, and } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { ensureNeonSchema, getDb, isNeonConfigured } from '@/db';
 import { communityDecks, users } from '@/db/schema';
 import { getAuthenticatedUserId } from '@/lib/auth';
+import {
+  fetchCommunityDeckBlobCards,
+  isBlobConfigured,
+  uploadCommunityDeckBlob,
+} from '@/lib/blob';
 import { buildCommunityStarterDecks } from '@/lib/community-seed';
 import { CommunityCardItem, CommunityDeck, LIMITS } from '@/lib/types';
 
-function mapCommunityDeck(
-  row: typeof communityDecks.$inferSelect
-): CommunityDeck {
-  let cards: CommunityCardItem[] = [];
+function parseCardsJson(raw: string): CommunityCardItem[] {
   try {
-    const parsed = JSON.parse(row.cardsJson);
-    if (Array.isArray(parsed)) cards = parsed;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    cards = [];
+    return [];
+  }
+}
+
+async function mapCommunityDeckWithBlob(
+  row: typeof communityDecks.$inferSelect
+): Promise<CommunityDeck> {
+  let cards = parseCardsJson(row.cardsJson);
+  if (cards.length === 0 && row.blobUrl) {
+    const blobCards = await fetchCommunityDeckBlobCards(row.blobUrl);
+    if (blobCards && blobCards.length > 0) {
+      cards = blobCards;
+    }
   }
   return {
     id: row.id,
@@ -25,17 +39,21 @@ function mapCommunityDeck(
     title: row.title,
     description: row.description,
     category: row.category,
-    cardCount: row.cardCount,
+    cardCount: row.cardCount || cards.length,
     downloadsCount: row.downloadsCount,
+    blobUrl: row.blobUrl ?? null,
     cards,
     publishedAt: Number(row.publishedAt),
   };
 }
 
 export async function GET() {
+  const blobConfigured = isBlobConfigured();
+
   if (!isNeonConfigured()) {
     return NextResponse.json({
       configured: false,
+      blobConfigured,
       decks: buildCommunityStarterDecks(),
     });
   }
@@ -63,6 +81,7 @@ export async function GET() {
             title: d.title,
             description: d.description,
             category: d.category,
+            blobUrl: null,
             cardsJson: JSON.stringify(d.cards),
             cardCount: d.cardCount,
             downloadsCount: d.downloadsCount,
@@ -78,9 +97,12 @@ export async function GET() {
         .limit(100);
     }
 
+    const decks = await Promise.all(rows.map(mapCommunityDeckWithBlob));
+
     return NextResponse.json({
       configured: true,
-      decks: rows.map(mapCommunityDeck),
+      blobConfigured,
+      decks,
     });
   } catch (error) {
     console.error('GET /api/community error:', error);
@@ -190,6 +212,16 @@ export async function POST(req: NextRequest) {
         .limit(1);
 
       if (existing) {
+        const uploadedBlobUrl = await uploadCommunityDeckBlob(existing.id, {
+          id: existing.id,
+          title,
+          description,
+          category,
+          authorName,
+          cards: cleanCards,
+          publishedAt: now,
+        });
+
         const [updated] = await db
           .update(communityDecks)
           .set({
@@ -197,18 +229,44 @@ export async function POST(req: NextRequest) {
             title,
             description,
             category,
-            cardsJson: JSON.stringify(cleanCards),
+            blobUrl: uploadedBlobUrl ?? existing.blobUrl ?? null,
+            cardsJson: uploadedBlobUrl ? '[]' : JSON.stringify(cleanCards),
             cardCount: cleanCards.length,
             publishedAt: now,
           })
           .where(eq(communityDecks.id, existing.id))
           .returning();
 
-        return NextResponse.json({ deck: mapCommunityDeck(updated) });
+        return NextResponse.json({
+          deck: {
+            id: updated.id,
+            sourceDeckId: updated.sourceDeckId ?? null,
+            authorId: updated.authorUserId,
+            authorName: updated.authorName,
+            title: updated.title,
+            description: updated.description,
+            category: updated.category,
+            cardCount: updated.cardCount,
+            downloadsCount: updated.downloadsCount,
+            blobUrl: updated.blobUrl ?? null,
+            cards: cleanCards,
+            publishedAt: Number(updated.publishedAt),
+          },
+        });
       }
     }
 
     const id = `comm_${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`;
+    const uploadedBlobUrl = await uploadCommunityDeckBlob(id, {
+      id,
+      title,
+      description,
+      category,
+      authorName,
+      cards: cleanCards,
+      publishedAt: now,
+    });
+
     const [inserted] = await db
       .insert(communityDecks)
       .values({
@@ -219,7 +277,8 @@ export async function POST(req: NextRequest) {
         title,
         description,
         category,
-        cardsJson: JSON.stringify(cleanCards),
+        blobUrl: uploadedBlobUrl,
+        cardsJson: uploadedBlobUrl ? '[]' : JSON.stringify(cleanCards),
         cardCount: cleanCards.length,
         downloadsCount: 0,
         publishedAt: now,
@@ -227,7 +286,22 @@ export async function POST(req: NextRequest) {
       .returning();
 
     return NextResponse.json(
-      { deck: mapCommunityDeck(inserted) },
+      {
+        deck: {
+          id: inserted.id,
+          sourceDeckId: inserted.sourceDeckId ?? null,
+          authorId: inserted.authorUserId,
+          authorName: inserted.authorName,
+          title: inserted.title,
+          description: inserted.description,
+          category: inserted.category,
+          cardCount: inserted.cardCount,
+          downloadsCount: inserted.downloadsCount,
+          blobUrl: inserted.blobUrl ?? null,
+          cards: cleanCards,
+          publishedAt: Number(inserted.publishedAt),
+        },
+      },
       { status: 201 }
     );
   } catch (error) {

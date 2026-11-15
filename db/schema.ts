@@ -93,6 +93,7 @@ export const communityDecks = pgTable(
     title: text('title').notNull(),
     description: text('description').notNull().default(''),
     category: text('category').notNull().default('Chung'),
+    blobUrl: text('blob_url'),
     cardsJson: text('cards_json').notNull(),
     cardCount: integer('card_count').notNull().default(0),
     downloadsCount: integer('downloads_count').notNull().default(0),

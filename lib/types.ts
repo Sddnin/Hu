@@ -80,6 +80,7 @@ export interface CommunityDeck {
   category: string;
   cardCount: number;
   downloadsCount: number;
+  blobUrl?: string | null;
   cards: CommunityCardItem[];
   publishedAt: number;
 }

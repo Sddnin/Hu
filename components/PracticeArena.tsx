@@ -222,7 +222,7 @@ export function PracticeArena({
 
   const deckLeaderboard = useMemo(() => {
     if (!activeDeck) return [];
-    return leaderboardEntries
+    const sorted = leaderboardEntries
       .filter(
         (entry) =>
           entry.deckId === activeDeck.id &&
@@ -232,9 +232,19 @@ export function PracticeArena({
         (a, b) =>
           b.score - a.score ||
           b.accuracy - a.accuracy ||
-          a.durationSeconds - b.durationSeconds
-      )
-      .slice(0, 12);
+          a.durationSeconds - b.durationSeconds ||
+          b.createdAt - a.createdAt
+      );
+    const seen = new Set<string>();
+    const deduped: LeaderboardEntry[] = [];
+    for (const entry of sorted) {
+      const playerKey = entry.userId || entry.playerName.trim().toLowerCase();
+      if (seen.has(playerKey)) continue;
+      seen.add(playerKey);
+      deduped.push(entry);
+      if (deduped.length >= 12) break;
+    }
+    return deduped;
   }, [activeDeck, leaderboardEntries, deckLbModeFilter]);
 
   const blastBestScore = useMemo(() => {

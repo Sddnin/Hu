@@ -130,13 +130,29 @@ export function CommunityView({
         Boolean
       ) as string[]
     );
-    return leaderboardEntries
+    const sorted = leaderboardEntries
       .filter(
         (e) =>
           matchedIds.has(e.deckId) ||
           e.deckTitle.toLowerCase() === activeCommunityDeck.title.toLowerCase()
       )
-      .slice(0, 15);
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          b.accuracy - a.accuracy ||
+          a.durationSeconds - b.durationSeconds ||
+          b.createdAt - a.createdAt
+      );
+    const seen = new Set<string>();
+    const deduped: LeaderboardEntry[] = [];
+    for (const entry of sorted) {
+      const playerKey = entry.userId || entry.playerName.trim().toLowerCase();
+      if (seen.has(playerKey)) continue;
+      seen.add(playerKey);
+      deduped.push(entry);
+      if (deduped.length >= 15) break;
+    }
+    return deduped;
   }, [activeCommunityDeck, leaderboardEntries]);
 
   function openPublishModal() {

@@ -171,13 +171,30 @@ export function LeaderboardStreakView({
   );
 
   const filteredEntries = useMemo(() => {
-    return leaderboardEntries
+    const sorted = leaderboardEntries
       .filter((e) => {
         if (lbModeFilter !== 'all' && e.mode !== lbModeFilter) return false;
         if (lbDeckFilter !== 'all' && e.deckId !== lbDeckFilter) return false;
         return true;
       })
-      .slice(0, 25);
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          b.accuracy - a.accuracy ||
+          a.durationSeconds - b.durationSeconds ||
+          b.createdAt - a.createdAt
+      );
+    const seen = new Set<string>();
+    const deduped: LeaderboardEntry[] = [];
+    for (const e of sorted) {
+      const playerKey = e.userId || e.playerName.trim().toLowerCase();
+      const key = lbDeckFilter !== 'all' ? playerKey : `${playerKey}__${e.deckId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(e);
+      if (deduped.length >= 25) break;
+    }
+    return deduped;
   }, [leaderboardEntries, lbModeFilter, lbDeckFilter]);
 
   const deckTitleMap = useMemo(() => {

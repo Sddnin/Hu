@@ -364,7 +364,12 @@ export function DecksView({
             Thư viện Bộ thẻ Từ vựng
           </h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            {decks.length} bộ thẻ · {totalCards} từ vựng · {totalMastered} từ đã thành thạo
+            {decks.length} bộ thẻ · {totalCards} từ vựng · {totalMastered} từ đã thành thạo ·{' '}
+            <span className="font-medium text-slate-700 dark:text-slate-300">
+              {user
+                ? `Lưu riêng cho tài khoản @${user.username}`
+                : 'Lưu trực tiếp trên máy này'}
+            </span>
           </p>
         </div>
 

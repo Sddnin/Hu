@@ -135,11 +135,17 @@ export async function ensureNeonSchema(): Promise<void> {
           title TEXT NOT NULL,
           description TEXT NOT NULL DEFAULT '',
           category TEXT NOT NULL DEFAULT 'Chung',
+          blob_url TEXT,
           cards_json TEXT NOT NULL,
           card_count INTEGER NOT NULL DEFAULT 0,
           downloads_count INTEGER NOT NULL DEFAULT 0,
           published_at BIGINT NOT NULL
         )
+      `;
+
+      await sql`
+        ALTER TABLE community_decks
+        ADD COLUMN IF NOT EXISTS blob_url TEXT
       `;
 
       await sql`

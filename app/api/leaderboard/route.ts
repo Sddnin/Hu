@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, ne } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { ensureNeonSchema, getDb, isNeonConfigured } from '@/db';
 import {
@@ -183,9 +183,24 @@ export async function GET(req: NextRequest) {
       )
       .slice(0, 20);
 
+    const mapped = entryRows.map(mapLeaderboardRow);
+    const seen = new Set<string>();
+    const dedupedEntries: LeaderboardEntry[] = [];
+    for (const item of mapped) {
+      const playerKey = item.userId || item.playerName.trim().toLowerCase();
+      const key =
+        mode && mode !== 'all'
+          ? `${playerKey}__${item.deckId}__${item.mode}`
+          : `${playerKey}__${item.deckId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      dedupedEntries.push(item);
+      if (dedupedEntries.length >= limit) break;
+    }
+
     return NextResponse.json({
       configured: true,
-      entries: entryRows.map(mapLeaderboardRow),
+      entries: dedupedEntries,
       streakLeaders,
     });
   } catch (error) {
@@ -251,6 +266,66 @@ export async function POST(req: NextRequest) {
     }
 
     const playerName = u.displayName || u.username;
+    const now = Date.now();
+
+    const existingRows = await db
+      .select()
+      .from(leaderboardEntries)
+      .where(
+        and(
+          eq(leaderboardEntries.userId, userId),
+          eq(leaderboardEntries.deckId, deckId),
+          eq(leaderboardEntries.mode, mode)
+        )
+      )
+      .orderBy(
+        desc(leaderboardEntries.score),
+        desc(leaderboardEntries.accuracy),
+        asc(leaderboardEntries.durationSeconds)
+      );
+
+    if (existingRows.length > 0) {
+      const bestExisting = existingRows[0];
+      if (existingRows.length > 1) {
+        await db
+          .delete(leaderboardEntries)
+          .where(
+            and(
+              eq(leaderboardEntries.userId, userId),
+              eq(leaderboardEntries.deckId, deckId),
+              eq(leaderboardEntries.mode, mode),
+              ne(leaderboardEntries.id, bestExisting.id)
+            )
+          );
+      }
+
+      const isBetterRun =
+        score > bestExisting.score ||
+        (score === bestExisting.score && accuracy > bestExisting.accuracy) ||
+        (score === bestExisting.score &&
+          accuracy === bestExisting.accuracy &&
+          durationSeconds < bestExisting.durationSeconds);
+
+      const [updated] = await db
+        .update(leaderboardEntries)
+        .set({
+          playerName,
+          deckTitle,
+          score: isBetterRun ? score : bestExisting.score,
+          accuracy: isBetterRun ? accuracy : bestExisting.accuracy,
+          durationSeconds: isBetterRun
+            ? durationSeconds
+            : bestExisting.durationSeconds,
+          streak: Math.max(bestExisting.streak, streak),
+          createdAt: isBetterRun ? now : Number(bestExisting.createdAt),
+        })
+        .where(eq(leaderboardEntries.id, bestExisting.id))
+        .returning();
+
+      return NextResponse.json({
+        entry: mapLeaderboardRow(updated),
+      });
+    }
 
     const id =
       typeof body.id === 'string' && body.id.trim()
@@ -261,7 +336,7 @@ export async function POST(req: NextRequest) {
       .insert(leaderboardEntries)
       .values({
         id,
-        userId: userId ?? null,
+        userId,
         playerName,
         deckId,
         deckTitle,
@@ -270,7 +345,7 @@ export async function POST(req: NextRequest) {
         accuracy,
         durationSeconds,
         streak,
-        createdAt: Date.now(),
+        createdAt: now,
       })
       .returning();
 
