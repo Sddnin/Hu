@@ -142,6 +142,9 @@
         "correctCount": {
           "type": "integer"
         },
+        "starred": {
+          "type": "boolean"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -183,7 +186,7 @@
         },
         "mode": {
           "type": "string",
-          "enum": ["flip", "quiz", "fill", "match"]
+          "enum": ["flip", "learn", "quiz", "fill", "match", "spell", "test"]
         },
         "totalItems": {
           "type": "integer"

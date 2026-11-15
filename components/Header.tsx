@@ -21,18 +21,18 @@ export function Header({
 }: HeaderProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur-sm dark:border-slate-800 dark:bg-slate-900/95">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-8 px-4 sm:px-6">
+      <div className="mx-auto flex h-[52px] max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 md:h-16 md:gap-8">
         <button
           type="button"
           onClick={() => onNavigate('decks')}
-          className="font-display text-xl font-bold tracking-tight text-slate-900 transition-colors hover:text-sky-600 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-600 dark:text-slate-100 dark:hover:text-sky-400 whitespace-nowrap shrink-0 cursor-pointer"
+          className="font-display text-lg font-bold tracking-tight text-slate-900 transition-colors hover:text-sky-600 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-600 dark:text-slate-100 dark:hover:text-sky-400 sm:text-xl whitespace-nowrap shrink-0 cursor-pointer"
         >
           LexiCard
         </button>
 
         <nav
           aria-label="Điều hướng chính"
-          className="flex items-center gap-5 sm:gap-7"
+          className="hidden md:flex items-center gap-7"
         >
           {NAV_ITEMS.map((item) => {
             const isActive = activeView === item.id;
@@ -64,7 +64,7 @@ export function Header({
           <button
             type="button"
             onClick={onStartQuickPractice}
-            className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 whitespace-nowrap shrink-0 cursor-pointer"
+            className="min-h-[38px] md:min-h-[40px] rounded-lg bg-sky-600 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-sky-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-sky-600 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 md:px-4 md:py-2 md:text-sm whitespace-nowrap shrink-0 cursor-pointer"
           >
             Luyện tập ngay
           </button>

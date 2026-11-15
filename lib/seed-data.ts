@@ -343,6 +343,7 @@ export function buildStarterData(ownerId = 'local'): {
         mastery: 'new',
         reviewCount: 0,
         correctCount: 0,
+        starred: false,
         createdAt: deckTs + cardIndex,
         updatedAt: deckTs + cardIndex,
       });

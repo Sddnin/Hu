@@ -255,6 +255,7 @@ export function useFlashcardStore() {
                   mastery: c.mastery || 'new',
                   reviewCount,
                   correctCount,
+                  starred: Boolean(c.starred),
                   createdAt: serverTimestamp(),
                   updatedAt: serverTimestamp(),
                 }
@@ -411,6 +412,7 @@ export function useFlashcardStore() {
                 mastery: (data.mastery as MasteryLevel) || 'new',
                 reviewCount: Number(data.reviewCount || 0),
                 correctCount: Number(data.correctCount || 0),
+                starred: Boolean(data.starred),
                 createdAt: toMillis(data.createdAt),
                 updatedAt: toMillis(data.updatedAt),
               };
@@ -654,6 +656,7 @@ export function useFlashcardStore() {
             mastery: 'new',
             reviewCount: 0,
             correctCount: 0,
+            starred: false,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
@@ -679,6 +682,7 @@ export function useFlashcardStore() {
           mastery: 'new',
           reviewCount: 0,
           correctCount: 0,
+          starred: false,
           createdAt: now,
           updatedAt: now,
         };
@@ -734,6 +738,7 @@ export function useFlashcardStore() {
               mastery: 'new',
               reviewCount: 0,
               correctCount: 0,
+              starred: false,
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             });
@@ -760,6 +765,7 @@ export function useFlashcardStore() {
           mastery: 'new',
           reviewCount: 0,
           correctCount: 0,
+          starred: false,
           createdAt: now + idx,
           updatedAt: now + idx,
         }));
@@ -874,6 +880,117 @@ export function useFlashcardStore() {
       }
     },
     [user, cards]
+  );
+
+  // Toggle Starred on a card
+  const toggleCardStar = useCallback(
+    async (card: Flashcard) => {
+      const nextStarred = !card.starred;
+      if (user && user.emailVerified) {
+        const uid = user.uid;
+        const cardPath = `users/${uid}/decks/${card.deckId}/cards/${card.id}`;
+        try {
+          await updateDoc(doc(db, cardPath), {
+            starred: nextStarred,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.UPDATE, cardPath);
+        }
+      } else {
+        setCards((prev) =>
+          prev.map((c) =>
+            c.id === card.id
+              ? { ...c, starred: nextStarred, updatedAt: Date.now() }
+              : c
+          )
+        );
+      }
+    },
+    [user]
+  );
+
+  // Duplicate Deck (Quizlet-style clone)
+  const duplicateDeck = useCallback(
+    async (sourceDeckId: string): Promise<string | null> => {
+      const sourceDeck = decks.find((d) => d.id === sourceDeckId);
+      if (!sourceDeck) return null;
+      const sourceCards = cards.filter((c) => c.deckId === sourceDeckId);
+      const newDeckId = createUniqueId('deck');
+      const newTitle = clampString(
+        `${sourceDeck.title} (Bản sao)`,
+        LIMITS.TITLE_MAX
+      );
+      const now = Date.now();
+
+      if (user && user.emailVerified) {
+        const uid = user.uid;
+        const deckPath = `users/${uid}/decks/${newDeckId}`;
+        try {
+          const batch = writeBatch(db);
+          batch.set(doc(db, deckPath), {
+            id: newDeckId,
+            ownerId: uid,
+            title: newTitle,
+            description: clampString(sourceDeck.description, LIMITS.DESC_MAX),
+            category: clampString(sourceDeck.category, LIMITS.CATEGORY_MAX),
+            cardCount: sourceCards.length,
+            masteredCount: 0,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          for (const c of sourceCards.slice(0, 100)) {
+            const cardId = createUniqueId('card');
+            batch.set(doc(db, `${deckPath}/cards/${cardId}`), {
+              id: cardId,
+              deckId: newDeckId,
+              ownerId: uid,
+              term: c.term,
+              phonetic: c.phonetic,
+              partOfSpeech: c.partOfSpeech,
+              meaning: c.meaning,
+              example: c.example,
+              mastery: 'new',
+              reviewCount: 0,
+              correctCount: 0,
+              starred: c.starred,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
+          await batch.commit();
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, deckPath);
+        }
+      } else {
+        const clonedDeck: Deck = {
+          id: newDeckId,
+          ownerId: 'local',
+          title: newTitle,
+          description: sourceDeck.description,
+          category: sourceDeck.category,
+          cardCount: sourceCards.length,
+          masteredCount: 0,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const clonedCards: Flashcard[] = sourceCards.map((c, idx) => ({
+          ...c,
+          id: createUniqueId(`card_${idx}`),
+          deckId: newDeckId,
+          ownerId: 'local',
+          mastery: 'new',
+          reviewCount: 0,
+          correctCount: 0,
+          createdAt: now + idx,
+          updatedAt: now + idx,
+        }));
+        setDecks((prev) => [...prev, clonedDeck]);
+        setCards((prev) => [...prev, ...clonedCards]);
+      }
+      return newDeckId;
+    },
+    [user, decks, cards]
   );
 
   // Update card mastery & log practice session atomically
@@ -1087,6 +1204,8 @@ export function useFlashcardStore() {
     bulkAddCards,
     updateCard,
     deleteCard,
+    toggleCardStar,
+    duplicateDeck,
     recordPracticeResults,
     deleteStudySession,
     updateDailyGoal,

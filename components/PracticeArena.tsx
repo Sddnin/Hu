@@ -6,14 +6,18 @@ import {
   Clock,
   RotateCcw,
   Shuffle,
+  Star,
   TrendingUp,
   XCircle,
 } from 'lucide-react';
 import { Deck, Flashcard, MODE_LABELS, PracticeMode } from '@/lib/types';
 import { FillBlankMode } from './practice/FillBlankMode';
 import { FlipMode, PracticeResultItem } from './practice/FlipMode';
+import { LearnMode } from './practice/LearnMode';
 import { MatchMode } from './practice/MatchMode';
 import { QuizMode } from './practice/QuizMode';
+import { SpellMode } from './practice/SpellMode';
+import { TestMode } from './practice/TestMode';
 
 interface PracticeArenaProps {
   decks: Deck[];
@@ -23,6 +27,7 @@ interface PracticeArenaProps {
   onSelectDeck: (deckId: string) => void;
   activeMode: PracticeMode;
   onChangeMode: (mode: PracticeMode) => void;
+  onToggleStar: (card: Flashcard) => Promise<void>;
   onRecordResults: (params: {
     deck: Deck;
     mode: PracticeMode;
@@ -58,6 +63,7 @@ export function PracticeArena({
   onSelectDeck,
   activeMode,
   onChangeMode,
+  onToggleStar,
   onRecordResults,
   onViewProgress,
   onBackToDecks,
@@ -70,7 +76,12 @@ export function PracticeArena({
     [activeDeck, cardsByDeck]
   );
 
-  const [onlyUnmastered, setOnlyUnmastered] = useState(false);
+  const [poolFilter, setPoolFilter] = useState<'all' | 'unmastered' | 'starred'>(
+    'all'
+  );
+  const [focusedMissedIds, setFocusedMissedIds] = useState<string[] | null>(
+    null
+  );
   const [shuffleSeed, setShuffleSeed] = useState(0);
   const [sessionKey, setSessionKey] = useState(1);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -84,15 +95,28 @@ export function PracticeArena({
   } | null>(null);
 
   const practicePool = useMemo(() => {
-    const filtered = onlyUnmastered
-      ? deckCards.filter((c) => c.mastery !== 'mastered')
-      : deckCards;
-    const base = filtered.length > 0 ? filtered : deckCards;
-    return shuffleSeed > 0 ? shuffleCards(base) : base;
-  }, [deckCards, onlyUnmastered, shuffleSeed]);
+    if (focusedMissedIds && focusedMissedIds.length > 0) {
+      const missedSet = new Set(focusedMissedIds);
+      const missed = deckCards.filter((c) => missedSet.has(c.id));
+      if (missed.length > 0) {
+        return shuffleSeed > 0 ? shuffleCards(missed) : missed;
+      }
+    }
 
-  const resetSessionState = (nextShuffle = false) => {
+    let filtered = deckCards;
+    if (poolFilter === 'unmastered') {
+      const unm = deckCards.filter((c) => c.mastery !== 'mastered');
+      if (unm.length > 0) filtered = unm;
+    } else if (poolFilter === 'starred') {
+      const starred = deckCards.filter((c) => c.starred);
+      if (starred.length > 0) filtered = starred;
+    }
+    return shuffleSeed > 0 ? shuffleCards(filtered) : filtered;
+  }, [deckCards, poolFilter, focusedMissedIds, shuffleSeed]);
+
+  const resetSessionState = (nextShuffle = false, clearMissed = true) => {
     if (nextShuffle) setShuffleSeed((s) => s + 1);
+    if (clearMissed) setFocusedMissedIds(null);
     setSessionKey((k) => k + 1);
     setElapsedSeconds(0);
     setSummary(null);
@@ -136,8 +160,15 @@ export function PracticeArena({
     setSummary((prev) => (prev ? { ...prev, saved: true } : null));
   }
 
-  function handleRestart(shuffleNow = false) {
-    resetSessionState(shuffleNow);
+  function handleRetryMissed() {
+    if (!summary) return;
+    const missedIds = Array.from(
+      new Set(summary.results.filter((r) => !r.isCorrect).map((r) => r.cardId))
+    );
+    if (missedIds.length === 0) return;
+    setFocusedMissedIds(missedIds);
+    onChangeMode('flip');
+    resetSessionState(false, false);
   }
 
   if (!activeDeck) {
@@ -149,7 +180,7 @@ export function PracticeArena({
         <button
           type="button"
           onClick={onBackToDecks}
-          className="mt-4 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white cursor-pointer"
+          className="mt-4 min-h-[44px] rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white cursor-pointer"
         >
           Quay lại Thư viện Bộ thẻ
         </button>
@@ -157,66 +188,77 @@ export function PracticeArena({
     );
   }
 
+  const starredTotal = deckCards.filter((c) => c.starred).length;
+  const missedCountInSummary = summary
+    ? summary.results.filter((r) => !r.isCorrect).length
+    : 0;
+
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       {/* Arena Header Controls */}
-      <div className="mb-8 flex flex-col gap-4 border-b border-slate-200 pb-6 dark:border-slate-800">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              Luyện tập · {activeDeck.title} · {practicePool.length} thẻ
+      <div className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-5 dark:border-slate-800 sm:mb-8 sm:pb-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
+              {activeDeck.title} · {practicePool.length} thẻ
+              {focusedMissedIds ? ' (Đang ôn từ sai)' : ''}
             </div>
-            <h1 className="mt-1 font-display text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+            <h1 className="mt-0.5 font-display text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
               {MODE_LABELS[activeMode]}
             </h1>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 font-mono-tabular">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 font-mono-tabular">
               <Clock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
               <span>{formatDuration(elapsedSeconds)}</span>
             </div>
 
             <button
               type="button"
-              onClick={() => handleRestart(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
+              onClick={() => resetSessionState(true, false)}
+              className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
             >
               <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Xáo trộn</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setOnlyUnmastered((v) => !v);
-                resetSessionState(false);
+            <select
+              aria-label="Lọc thẻ luyện tập"
+              value={poolFilter}
+              onChange={(e) => {
+                setPoolFilter(
+                  e.target.value as 'all' | 'unmastered' | 'starred'
+                );
+                resetSessionState(false, true);
               }}
-              aria-pressed={onlyUnmastered}
-              className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
-                onlyUnmastered
-                  ? 'border-sky-600 bg-sky-50 text-sky-700 dark:border-sky-500 dark:bg-sky-950/40 dark:text-sky-300'
-                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'
-              }`}
+              className="min-h-[38px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
             >
-              {onlyUnmastered ? 'Đang lọc: Chưa thuộc' : 'Chỉ ôn thẻ chưa thuộc'}
-            </button>
+              <option value="all">Tất cả thẻ ({deckCards.length})</option>
+              <option value="unmastered">Chỉ thẻ chưa thuộc</option>
+              <option value="starred" disabled={starredTotal === 0}>
+                Chỉ thẻ gắn sao ({starredTotal})
+              </option>
+            </select>
           </div>
         </div>
 
-        {/* Mode Switcher Tabs + Quick Deck Picker */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Mode Switcher Tabs (Horizontal scroll on mobile) */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div
             role="tablist"
             aria-label="Chế độ luyện tập"
-            className="flex flex-wrap items-center gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-900"
+            className="flex items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-900"
           >
             {(
               [
                 { id: 'flip', label: 'Lật thẻ' },
+                { id: 'learn', label: 'Học thông minh' },
                 { id: 'quiz', label: 'Trắc nghiệm' },
                 { id: 'fill', label: 'Điền từ' },
                 { id: 'match', label: 'Nối thẻ' },
+                { id: 'spell', label: 'Nghe & Viết' },
+                { id: 'test', label: 'Kiểm tra' },
               ] as const
             ).map((m) => (
               <button
@@ -226,9 +268,9 @@ export function PracticeArena({
                 aria-selected={activeMode === m.id}
                 onClick={() => {
                   onChangeMode(m.id);
-                  resetSessionState(false);
+                  resetSessionState(false, true);
                 }}
-                className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   activeMode === m.id
                     ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-800 dark:text-slate-100'
                     : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
@@ -239,7 +281,7 @@ export function PracticeArena({
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
             <label
               htmlFor="arena-deck-select"
               className="text-xs font-medium text-slate-500 dark:text-slate-400"
@@ -251,9 +293,9 @@ export function PracticeArena({
               value={activeDeck.id}
               onChange={(e) => {
                 onSelectDeck(e.target.value);
-                resetSessionState(false);
+                resetSessionState(false, true);
               }}
-              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+              className="min-h-[38px] max-w-[200px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-800 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
             >
               {decks.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -274,23 +316,23 @@ export function PracticeArena({
           <button
             type="button"
             onClick={onBackToDecks}
-            className="mt-4 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 cursor-pointer"
+            className="mt-4 min-h-[44px] rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 cursor-pointer"
           >
             Thêm thẻ vào bộ này
           </button>
         </div>
       ) : summary ? (
         /* Session Complete Summary */
-        <div className="mx-auto max-w-2xl rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900 sm:p-8">
+        <div className="mx-auto max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900 sm:p-8">
           <div className="text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
               <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
             </div>
-            <h2 className="mt-3 font-display text-2xl font-bold text-slate-900 dark:text-slate-100">
+            <h2 className="mt-3 font-display text-xl font-bold text-slate-900 dark:text-slate-100 sm:text-2xl">
               Hoàn thành phiên luyện tập
             </h2>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              {activeDeck.title} · Chế độ {MODE_LABELS[activeMode]} ·{' '}
+              {activeDeck.title} · {MODE_LABELS[activeMode]} ·{' '}
               {summary.saved
                 ? 'Đã lưu vào Lịch sử học tập'
                 : 'Đang lưu kết quả...'}
@@ -324,50 +366,86 @@ export function PracticeArena({
             </div>
           </div>
 
-          {/* Per-item breakdown */}
+          {/* Per-item breakdown with quick Star button */}
           <div className="mt-6">
             <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               Chi tiết từng từ trong phiên
             </h3>
             <div className="mt-3 max-h-64 divide-y divide-slate-200 overflow-y-auto rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
-              {summary.results.map((item, idx) => (
-                <div
-                  key={`${item.cardId}_${idx}`}
-                  className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm"
-                >
-                  <div className="min-w-0">
-                    <span className="font-semibold text-slate-900 dark:text-slate-100">
-                      {item.term}
-                    </span>
-                    <span className="mx-2 text-slate-300 dark:text-slate-700">
-                      —
-                    </span>
-                    <span className="text-slate-600 dark:text-slate-400">
-                      {item.meaning}
-                    </span>
-                  </div>
+              {summary.results.map((item, idx) => {
+                const fullCard = deckCards.find((c) => c.id === item.cardId);
+                return (
+                  <div
+                    key={`${item.cardId}_${idx}`}
+                    className="flex items-center justify-between gap-2 px-3.5 py-2.5 text-sm"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="font-semibold text-slate-900 dark:text-slate-100">
+                        {item.term}
+                      </span>
+                      <span className="mx-1.5 text-slate-300 dark:text-slate-700">
+                        —
+                      </span>
+                      <span className="text-slate-600 dark:text-slate-400">
+                        {item.meaning}
+                      </span>
+                    </div>
 
-                  {item.isCorrect ? (
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400 shrink-0">
-                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Đạt</span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 dark:text-red-400 shrink-0">
-                      <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Cần ôn</span>
-                    </span>
-                  )}
-                </div>
-              ))}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {fullCard && (
+                        <button
+                          type="button"
+                          onClick={() => onToggleStar(fullCard)}
+                          aria-label={`Gắn sao ${fullCard.term}`}
+                          className={`inline-flex min-h-[34px] min-w-[34px] items-center justify-center rounded-md cursor-pointer ${
+                            fullCard.starred
+                              ? 'text-amber-500 dark:text-amber-400'
+                              : 'text-slate-400 hover:text-amber-500'
+                          }`}
+                        >
+                          <Star
+                            className={`h-4 w-4 ${
+                              fullCard.starred ? 'fill-current' : ''
+                            }`}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      )}
+
+                      {item.isCorrect ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>Đạt</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 dark:text-red-400">
+                          <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>Cần ôn</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:justify-center">
+            {missedCountInSummary > 0 && (
+              <button
+                type="button"
+                onClick={handleRetryMissed}
+                className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-amber-700 cursor-pointer"
+              >
+                <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                <span>Ôn lại {missedCountInSummary} từ chưa thuộc</span>
+              </button>
+            )}
+
             <button
               type="button"
-              onClick={() => handleRestart(false)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-700 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 cursor-pointer"
+              onClick={() => resetSessionState(false, true)}
+              className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-700 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 cursor-pointer"
             >
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
               <span>Luyện tập lại</span>
@@ -376,10 +454,10 @@ export function PracticeArena({
             <button
               type="button"
               onClick={onViewProgress}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 cursor-pointer"
+              className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 cursor-pointer"
             >
               <TrendingUp className="h-4 w-4" aria-hidden="true" />
-              <span>Xem lịch sử & tiến độ</span>
+              <span>Xem lịch sử</span>
             </button>
           </div>
         </div>
@@ -387,7 +465,18 @@ export function PracticeArena({
         /* Active Practice Mode */
         <div key={`${activeDeck.id}_${activeMode}_${sessionKey}`}>
           {activeMode === 'flip' && (
-            <FlipMode cards={practicePool} onComplete={handleComplete} />
+            <FlipMode
+              cards={practicePool}
+              onToggleStar={onToggleStar}
+              onComplete={handleComplete}
+            />
+          )}
+          {activeMode === 'learn' && (
+            <LearnMode
+              cards={practicePool}
+              allPoolCards={allCards}
+              onComplete={handleComplete}
+            />
           )}
           {activeMode === 'quiz' && (
             <QuizMode
@@ -401,6 +490,16 @@ export function PracticeArena({
           )}
           {activeMode === 'match' && (
             <MatchMode cards={practicePool} onComplete={handleComplete} />
+          )}
+          {activeMode === 'spell' && (
+            <SpellMode cards={practicePool} onComplete={handleComplete} />
+          )}
+          {activeMode === 'test' && (
+            <TestMode
+              cards={practicePool}
+              allPoolCards={allCards}
+              onComplete={handleComplete}
+            />
           )}
         </div>
       )}

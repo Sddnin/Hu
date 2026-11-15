@@ -1,4 +1,4 @@
-export function speakEnglish(text: string): boolean {
+export function speakEnglish(text: string, rate = 0.94): boolean {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
     return false;
   }
@@ -9,7 +9,7 @@ export function speakEnglish(text: string): boolean {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(trimmed);
     utterance.lang = 'en-US';
-    utterance.rate = 0.94;
+    utterance.rate = rate;
     utterance.pitch = 1;
 
     const voices = window.speechSynthesis.getVoices();

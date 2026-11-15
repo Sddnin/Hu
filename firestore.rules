@@ -59,7 +59,7 @@ service cloud.firestore {
 
     function isValidFlashcard(data, cardId, deckId, userId) {
       return data.keys().hasAll(['id', 'deckId', 'ownerId', 'term', 'phonetic', 'partOfSpeech', 'meaning', 'example', 'mastery', 'reviewCount', 'correctCount', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'deckId', 'ownerId', 'term', 'phonetic', 'partOfSpeech', 'meaning', 'example', 'mastery', 'reviewCount', 'correctCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'deckId', 'ownerId', 'term', 'phonetic', 'partOfSpeech', 'meaning', 'example', 'mastery', 'reviewCount', 'correctCount', 'starred', 'createdAt', 'updatedAt'])
         && data.id is string && data.id == cardId && isValidId(data.id)
         && data.deckId is string && data.deckId == deckId && isValidId(data.deckId)
         && data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid && isValidId(data.ownerId)
@@ -71,6 +71,7 @@ service cloud.firestore {
         && data.mastery in ['new', 'learning', 'mastered']
         && data.reviewCount is int && data.reviewCount >= 0 && data.reviewCount <= 100000
         && data.correctCount is int && data.correctCount >= 0 && data.correctCount <= data.reviewCount
+        && (!('starred' in data) || data.starred is bool)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -82,7 +83,7 @@ service cloud.firestore {
         && data.ownerId is string && data.ownerId == userId && data.ownerId == request.auth.uid && isValidId(data.ownerId)
         && data.deckId is string && isValidId(data.deckId)
         && data.deckTitle is string && data.deckTitle.size() >= 1 && data.deckTitle.size() <= 100
-        && data.mode in ['flip', 'quiz', 'fill', 'match']
+        && data.mode in ['flip', 'learn', 'quiz', 'fill', 'match', 'spell', 'test']
         && data.totalItems is int && data.totalItems >= 1 && data.totalItems <= 500
         && data.correctCount is int && data.correctCount >= 0 && data.correctCount <= data.totalItems
         && data.accuracy is int && data.accuracy >= 0 && data.accuracy <= 100
@@ -150,7 +151,8 @@ service cloud.firestore {
             && incoming().updatedAt == request.time
             && (
               incoming().diff(existing()).affectedKeys().hasOnly(['term', 'phonetic', 'partOfSpeech', 'meaning', 'example', 'updatedAt']) ||
-              incoming().diff(existing()).affectedKeys().hasOnly(['mastery', 'reviewCount', 'correctCount', 'updatedAt'])
+              incoming().diff(existing()).affectedKeys().hasOnly(['mastery', 'reviewCount', 'correctCount', 'updatedAt']) ||
+              incoming().diff(existing()).affectedKeys().hasOnly(['starred', 'updatedAt'])
             );
           allow delete: if isValidId(userId) && isValidId(deckId) && isValidId(cardId) && isOwner(userId);
         }

@@ -1,6 +1,13 @@
 export type MasteryLevel = 'new' | 'learning' | 'mastered';
 
-export type PracticeMode = 'flip' | 'quiz' | 'fill' | 'match';
+export type PracticeMode =
+  | 'flip'
+  | 'learn'
+  | 'quiz'
+  | 'fill'
+  | 'match'
+  | 'spell'
+  | 'test';
 
 export type AppView = 'decks' | 'practice' | 'progress';
 
@@ -28,6 +35,7 @@ export interface Flashcard {
   mastery: MasteryLevel;
   reviewCount: number;
   correctCount: number;
+  starred: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -62,9 +70,12 @@ export const LIMITS = {
 
 export const MODE_LABELS: Record<PracticeMode, string> = {
   flip: 'Lật thẻ',
+  learn: 'Học thông minh',
   quiz: 'Trắc nghiệm',
   fill: 'Điền từ',
   match: 'Nối thẻ',
+  spell: 'Nghe & Viết',
+  test: 'Kiểm tra',
 };
 
 export const MASTERY_LABELS: Record<MasteryLevel, string> = {

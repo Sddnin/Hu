@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { DecksView } from '@/components/DecksView';
 import { Header } from '@/components/Header';
+import { MobileBottomNav } from '@/components/MobileBottomNav';
 import { PracticeArena } from '@/components/PracticeArena';
 import { ProgressView } from '@/components/ProgressView';
 import { WorkspaceToolbar } from '@/components/WorkspaceToolbar';
@@ -45,8 +46,16 @@ export default function HomePage() {
     setActiveView('practice');
   }
 
+  function handleStartTestFromNav() {
+    if (effectiveSelectedDeckId) {
+      setSelectedDeckId(effectiveSelectedDeckId);
+    }
+    setActiveMode('test');
+    setActiveView('practice');
+  }
+
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col pb-16 md:pb-0">
       <Header
         activeView={activeView}
         onNavigate={setActiveView}
@@ -71,7 +80,7 @@ export default function HomePage() {
 
       <main className="flex-1">
         {!store.hydrated ? (
-          <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
+          <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6">
             <div className="h-8 w-56 rounded-lg bg-slate-200 dark:bg-slate-800" />
             <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-12">
               <div className="h-72 rounded-xl bg-slate-200/70 dark:bg-slate-900 lg:col-span-4" />
@@ -88,10 +97,12 @@ export default function HomePage() {
             onCreateDeck={store.createDeck}
             onUpdateDeck={store.updateDeck}
             onDeleteDeck={store.deleteDeck}
+            onDuplicateDeck={store.duplicateDeck}
             onAddCard={store.addCard}
             onBulkAddCards={store.bulkAddCards}
             onUpdateCard={store.updateCard}
             onDeleteCard={store.deleteCard}
+            onToggleStar={store.toggleCardStar}
           />
         ) : activeView === 'practice' ? (
           <PracticeArena
@@ -102,6 +113,7 @@ export default function HomePage() {
             onSelectDeck={setSelectedDeckId}
             activeMode={activeMode}
             onChangeMode={setActiveMode}
+            onToggleStar={store.toggleCardStar}
             onRecordResults={store.recordPracticeResults}
             onViewProgress={() => setActiveView('progress')}
             onBackToDecks={() => setActiveView('decks')}
@@ -119,12 +131,19 @@ export default function HomePage() {
         )}
       </main>
 
-      <footer className="border-t border-slate-200 bg-white py-5 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-4 sm:px-6">
+      <footer className="hidden md:block border-t border-slate-200 bg-white py-5 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-6">
           <span>LexiCard · Luyện tập Flashcard thông minh</span>
-          <span>Phím tắt lật thẻ: Space lật · 1 / 2 / 3 đánh giá mức nhớ</span>
+          <span>Phím tắt: Space lật thẻ · A nghe phát âm · S gắn sao · 1 / 2 / 3 đánh giá</span>
         </div>
       </footer>
+
+      <MobileBottomNav
+        activeView={activeView}
+        activeMode={activeMode}
+        onSelectView={setActiveView}
+        onStartTest={handleStartTestFromNav}
+      />
     </div>
   );
 }
