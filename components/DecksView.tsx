@@ -721,6 +721,7 @@ export function DecksView({
                         { id: 'spell', label: 'Nghe & Viết', hint: 'Chính tả & phát âm' },
                         { id: 'blast', label: 'Xếp khối Blast', hint: 'Lưới 8×8 ăn điểm BXH' },
                         { id: 'meteor', label: 'Bắn thiên thạch', hint: 'Súng laser vũ trụ BXH' },
+                        { id: 'tank', label: 'Xe tăng 3D', hint: 'Lái tăng 390 húc cổng' },
                         { id: 'test', label: 'Kiểm tra', hint: 'Đề thi tổng hợp hẹn giờ' },
                       ] as const
                     ).map((m) => (

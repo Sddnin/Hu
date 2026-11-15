@@ -184,6 +184,9 @@ export async function POST(req: NextRequest) {
         'fill',
         'match',
         'spell',
+        'blast',
+        'meteor',
+        'tank',
         'test',
       ]);
       const sessionRows: Array<typeof studySessions.$inferInsert> =

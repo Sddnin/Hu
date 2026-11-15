@@ -9,6 +9,7 @@ export type PracticeMode =
   | 'spell'
   | 'blast'
   | 'meteor'
+  | 'tank'
   | 'test';
 
 export type LeaderboardMode =
@@ -143,6 +144,7 @@ export const MODE_LABELS: Record<PracticeMode, string> = {
   spell: 'Nghe & Viết',
   blast: 'Xếp khối Blast',
   meteor: 'Bắn thiên thạch',
+  tank: 'Xe tăng 3D',
   test: 'Kiểm tra',
 };
 

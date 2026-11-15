@@ -29,6 +29,7 @@ const VALID_LB_MODES = new Set<LeaderboardMode>([
   'spell',
   'blast',
   'meteor',
+  'tank',
   'test',
 ]);
 

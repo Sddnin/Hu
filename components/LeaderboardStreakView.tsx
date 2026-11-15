@@ -91,6 +91,7 @@ const LEADERBOARD_FILTERS: Array<{ id: 'all' | LeaderboardMode; label: string }>
   { id: 'all', label: 'Tất cả' },
   { id: 'blast', label: 'Xếp khối Blast' },
   { id: 'meteor', label: 'Bắn thiên thạch' },
+  { id: 'tank', label: 'Xe tăng 3D' },
   { id: 'match_grid', label: 'Ghép thẻ 4×3' },
   { id: 'match_memory', label: 'Lật thẻ 4×4' },
   { id: 'match_columns', label: 'Nối 2 cột' },

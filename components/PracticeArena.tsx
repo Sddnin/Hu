@@ -32,6 +32,7 @@ import { MatchMode, PracticeCompletionMeta } from './practice/MatchMode';
 import { MeteorShooterGame } from './practice/MeteorShooterGame';
 import { QuizMode } from './practice/QuizMode';
 import { SpellMode } from './practice/SpellMode';
+import { TankGateGame } from './practice/TankGateGame';
 import { TestMode } from './practice/TestMode';
 
 export type PracticePoolFilter =
@@ -261,6 +262,13 @@ export function PracticeArena({
       .reduce((max, e) => Math.max(max, e.score), 0);
   }, [activeDeck, leaderboardEntries]);
 
+  const tankBestScore = useMemo(() => {
+    if (!activeDeck) return 0;
+    return leaderboardEntries
+      .filter((e) => e.deckId === activeDeck.id && e.mode === 'tank')
+      .reduce((max, e) => Math.max(max, e.score), 0);
+  }, [activeDeck, leaderboardEntries]);
+
   const resetSessionState = (nextShuffle = false, clearMissed = true) => {
     if (nextShuffle) setShuffleSeed((s) => s + 1);
     if (clearMissed) setFocusedMissedIds(null);
@@ -348,6 +356,48 @@ export function PracticeArena({
     await Promise.all(tasks);
 
     setSummary((prev) => (prev ? { ...prev, saved: true } : null));
+  }
+
+  async function handleQuickSaveTank(
+    results: PracticeResultItem[],
+    meta: PracticeCompletionMeta
+  ) {
+    if (!activeDeck) return;
+    const totalItems = results.length;
+    const correctCount = results.filter((r) => r.isCorrect).length;
+    const accuracy =
+      totalItems > 0 ? Math.round((correctCount / totalItems) * 100) : 0;
+    const duration = Math.max(1, elapsedSeconds);
+    const finalScore =
+      meta.score ??
+      Math.max(0, correctCount * 100 + accuracy - Math.min(180, duration));
+
+    const tasks: Array<Promise<void>> = [
+      onRecordResults({
+        deck: activeDeck,
+        mode: 'tank',
+        results,
+        totalItems,
+        correctCount,
+        durationSeconds: duration,
+      }),
+    ];
+
+    if (user) {
+      tasks.push(
+        onSubmitLeaderboardScore({
+          deckId: activeDeck.id,
+          deckTitle: activeDeck.title,
+          mode: 'tank',
+          score: finalScore,
+          accuracy,
+          durationSeconds: duration,
+          streak: meta.maxStreak ?? 0,
+        })
+      );
+    }
+
+    await Promise.all(tasks);
   }
 
   function handleRetryMissed() {
@@ -530,6 +580,7 @@ export function PracticeArena({
                 { id: 'spell', label: 'Nghe & Viết' },
                 { id: 'blast', label: 'Xếp khối Blast' },
                 { id: 'meteor', label: 'Bắn thiên thạch' },
+                { id: 'tank', label: 'Xe tăng 3D' },
                 { id: 'test', label: 'Kiểm tra' },
               ] as const
             ).map((m) => (
@@ -605,6 +656,7 @@ export function PracticeArena({
                 { id: 'all', label: 'Tất cả chế độ' },
                 { id: 'blast', label: 'Xếp khối Blast' },
                 { id: 'meteor', label: 'Bắn thiên thạch' },
+                { id: 'tank', label: 'Xe tăng 3D' },
                 { id: 'match_grid', label: 'Ghép thẻ 4×3' },
                 { id: 'match_memory', label: 'Lật thẻ 4×4' },
                 { id: 'match_columns', label: 'Nối 2 cột' },
@@ -903,6 +955,20 @@ export function PracticeArena({
               bestScore={meteorBestScore}
               autoSpeak={autoSpeak}
               onComplete={handleComplete}
+            />
+          )}
+          {activeMode === 'tank' && (
+            <TankGateGame
+              cards={practicePool}
+              allPoolCards={allCards}
+              deckTitle={activeDeck.title}
+              bestScore={tankBestScore}
+              autoSpeak={autoSpeak}
+              isLoggedIn={Boolean(user)}
+              onQuickSave={handleQuickSaveTank}
+              onComplete={handleComplete}
+              onViewLeaderboard={onViewLeaderboard}
+              onOpenAuth={onOpenAuth}
             />
           )}
           {activeMode === 'test' && (
