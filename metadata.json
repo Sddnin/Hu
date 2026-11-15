@@ -1,0 +1,6 @@
+{
+  "name": "LexiCard — Flashcard & Luyện tập Từ vựng",
+  "description": "Website học từ vựng Flashcard với giao diện sáng/tối, luyện tập đa dạng (lật thẻ, trắc nghiệm, điền từ, nối thẻ) và lưu lịch sử theo dõi tiến độ.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
