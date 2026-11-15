@@ -1,25 +1,24 @@
 'use client';
 
-import { BarChart3, BookOpen, ClipboardCheck, Layers } from 'lucide-react';
-import { AppView, PracticeMode } from '@/lib/types';
+import { Gamepad2, Globe, Layers, Trophy } from 'lucide-react';
+import { AppView } from '@/lib/types';
 
 interface MobileBottomNavProps {
   activeView: AppView;
-  activeMode: PracticeMode;
   onSelectView: (view: AppView) => void;
-  onStartTest: () => void;
 }
 
 export function MobileBottomNav({
   activeView,
-  activeMode,
   onSelectView,
-  onStartTest,
 }: MobileBottomNavProps) {
-  const isTestActive = activeView === 'practice' && activeMode === 'test';
-  const isPracticeActive = activeView === 'practice' && activeMode !== 'test';
-
-  const items = [
+  const items: Array<{
+    id: AppView;
+    label: string;
+    icon: typeof Layers;
+    active: boolean;
+    onClick: () => void;
+  }> = [
     {
       id: 'decks',
       label: 'Bộ thẻ',
@@ -28,25 +27,25 @@ export function MobileBottomNav({
       onClick: () => onSelectView('decks'),
     },
     {
+      id: 'community',
+      label: 'Kho thẻ',
+      icon: Globe,
+      active: activeView === 'community',
+      onClick: () => onSelectView('community'),
+    },
+    {
       id: 'practice',
       label: 'Luyện tập',
-      icon: BookOpen,
-      active: isPracticeActive,
+      icon: Gamepad2,
+      active: activeView === 'practice',
       onClick: () => onSelectView('practice'),
     },
     {
-      id: 'test',
-      label: 'Kiểm tra',
-      icon: ClipboardCheck,
-      active: isTestActive,
-      onClick: onStartTest,
-    },
-    {
-      id: 'progress',
-      label: 'Tiến độ',
-      icon: BarChart3,
-      active: activeView === 'progress',
-      onClick: () => onSelectView('progress'),
+      id: 'leaderboard',
+      label: 'BXH & Chuỗi',
+      icon: Trophy,
+      active: activeView === 'leaderboard',
+      onClick: () => onSelectView('leaderboard'),
     },
   ];
 

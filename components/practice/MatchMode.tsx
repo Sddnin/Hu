@@ -1,15 +1,24 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Volume2, XCircle } from 'lucide-react';
+import { Flame, Volume2, XCircle } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { speakEnglish } from '@/lib/speech';
-import { Flashcard } from '@/lib/types';
+import { Flashcard, LeaderboardMode } from '@/lib/types';
 import { PracticeResultItem } from './FlipMode';
+
+export interface PracticeCompletionMeta {
+  score?: number;
+  leaderboardMode?: LeaderboardMode;
+  maxStreak?: number;
+}
 
 interface MatchModeProps {
   cards: Flashcard[];
-  onComplete: (results: PracticeResultItem[]) => void;
+  onComplete: (
+    results: PracticeResultItem[],
+    meta?: PracticeCompletionMeta
+  ) => void;
 }
 
 type BoardStyle = 'columns' | 'grid' | 'memory';
@@ -33,7 +42,9 @@ function shuffle<T>(arr: T[]): T[] {
 
 export function MatchMode({ cards, onComplete }: MatchModeProps) {
   const [boardStyle, setBoardStyle] = useState<BoardStyle>('columns');
-  const roundSize = boardStyle === 'columns' ? 5 : 4;
+  // columns: 5 pairs; grid (4x3): 6 pairs = 12 tiles; memory (4x4): 8 pairs = 16 tiles
+  const roundSize =
+    boardStyle === 'columns' ? 5 : boardStyle === 'grid' ? 6 : 8;
 
   const rounds = useMemo(() => {
     const chunks: Flashcard[][] = [];
@@ -49,11 +60,9 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
     [rounds, roundIndex]
   );
 
-  // Two-column lists (side-by-side on both Mobile & PC)
   const leftTerms = useMemo(() => shuffle(currentRound), [currentRound]);
   const rightMeanings = useMemo(() => shuffle(currentRound), [currentRound]);
 
-  // Unified shuffled tiles (for 'grid' and 'memory' modes)
   const unifiedTiles = useMemo<MatchTile[]>(() => {
     const list: MatchTile[] = [];
     for (const c of currentRound) {
@@ -74,14 +83,10 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
     return shuffle(list);
   }, [currentRound]);
 
-  // Selection state for 'columns'
   const [selectedLeftId, setSelectedLeftId] = useState<string | null>(null);
   const [selectedRightId, setSelectedRightId] = useState<string | null>(null);
-
-  // Selection state for 'grid' / 'memory' (up to 2 flipped/selected tile uids)
   const [pickedUids, setPickedUids] = useState<string[]>([]);
 
-  // Matched & transient feedback state
   const [justMatchedIds, setJustMatchedIds] = useState<Record<string, boolean>>(
     {}
   );
@@ -94,6 +99,10 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
     rightId?: string;
     uids?: string[];
   } | null>(null);
+
+  const [score, setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [maxStreak, setMaxStreak] = useState(0);
 
   const timersRef = useRef<number[]>([]);
   const lockedRef = useRef(false);
@@ -125,11 +134,22 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
     setRoundIndex(0);
     setMatchedIds({});
     setMistakeCardIds({});
+    setScore(0);
+    setStreak(0);
+    setMaxStreak(0);
     clearRoundSelections();
   }
 
   function handleMatchSuccess(matchedCardId: string) {
     lockedRef.current = true;
+    const nextStreak = streak + 1;
+    const nextMaxStreak = Math.max(maxStreak, nextStreak);
+    const pointsEarned = 100 + Math.min(nextStreak - 1, 8) * 20;
+    const nextScore = score + pointsEarned;
+
+    setStreak(nextStreak);
+    setMaxStreak(nextMaxStreak);
+    setScore(nextScore);
     setJustMatchedIds((prev) => ({ ...prev, [matchedCardId]: true }));
     setSelectedLeftId(null);
     setSelectedRightId(null);
@@ -161,7 +181,21 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
             meaning: c.meaning,
             isCorrect: !allMistakes[c.id],
           }));
-          schedule(() => onComplete(finalResults), 240);
+          const leaderboardMode: LeaderboardMode =
+            boardStyle === 'grid'
+              ? 'match_grid'
+              : boardStyle === 'memory'
+                ? 'match_memory'
+                : 'match_columns';
+          schedule(
+            () =>
+              onComplete(finalResults, {
+                score: nextScore,
+                leaderboardMode,
+                maxStreak: nextMaxStreak,
+              }),
+            240
+          );
         }
       }
     }, 260);
@@ -172,6 +206,8 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
       handleMatchSuccess(leftId);
     } else {
       lockedRef.current = true;
+      setStreak(0);
+      setScore((s) => Math.max(0, s - 15));
       setMistakeCardIds((prev) => ({
         ...prev,
         [leftId]: true,
@@ -245,6 +281,8 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
       handleMatchSuccess(tile.cardId);
     } else {
       lockedRef.current = true;
+      setStreak(0);
+      setScore((s) => Math.max(0, s - 15));
       setMistakeCardIds((prev) => ({
         ...prev,
         [firstTile.cardId]: true,
@@ -272,11 +310,20 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
     <div className="mx-auto max-w-3xl">
       {/* Top Status & Mode Style Switcher */}
       <div className="mb-3 flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+        <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-600 dark:text-slate-400">
           <span className="font-mono-tabular font-semibold">
             Vòng {roundIndex + 1}/{rounds.length} · Đã xóa{' '}
             {matchedCountInRound}/{currentRound.length} cặp
           </span>
+          <span className="font-mono-tabular font-bold text-sky-600 dark:text-sky-400">
+            {score} điểm
+          </span>
+          {streak >= 2 && (
+            <span className="inline-flex items-center gap-1 font-mono-tabular font-semibold text-amber-600 dark:text-amber-400">
+              <Flame className="h-3.5 w-3.5" aria-hidden="true" />
+              x{streak}
+            </span>
+          )}
           {mismatchPair && (
             <span className="inline-flex items-center gap-1 font-semibold text-red-600 dark:text-red-400">
               <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
@@ -293,8 +340,8 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
           {(
             [
               { id: 'columns', label: 'Nối 2 cột' },
-              { id: 'grid', label: 'Ghép thẻ' },
-              { id: 'memory', label: 'Lật trí nhớ' },
+              { id: 'grid', label: 'Ghép thẻ 4×3' },
+              { id: 'memory', label: 'Lật thẻ 4×4' },
             ] as const
           ).map((mode) => (
             <button
@@ -317,8 +364,8 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
         {boardStyle === 'columns'
           ? 'Chọn từ tiếng Anh và nghĩa tương ứng — ghép đúng 2 thẻ sẽ biến mất.'
           : boardStyle === 'grid'
-            ? 'Chạm vào 2 thẻ khớp nghĩa nhau để làm biến mất khỏi bảng.'
-            : 'Lật mở 2 thẻ bất kỳ — nếu khớp Anh–Việt, cả 2 thẻ sẽ biến mất.'}
+            ? 'Bảng 4×3 (12 thẻ / 6 cặp): chạm 2 thẻ khớp nghĩa nhau để xóa khỏi bảng.'
+            : 'Bảng 4×4 (16 thẻ / 8 cặp): lật mở 2 thẻ bất kỳ — nếu khớp Anh–Việt, cả 2 thẻ sẽ biến mất.'}
       </p>
 
       <div className="mb-5 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
@@ -333,7 +380,6 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
       {boardStyle === 'columns' ? (
         /* Side-by-Side 2-Column Layout on BOTH Mobile and Desktop */
         <div className="grid grid-cols-2 gap-2.5 sm:gap-4">
-          {/* Left Column: English Terms */}
           <div className="space-y-2 sm:space-y-2.5" aria-label="Cột từ tiếng Anh">
             <div className="text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400">
               Tiếng Anh
@@ -401,7 +447,6 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
             </AnimatePresence>
           </div>
 
-          {/* Right Column: Vietnamese Meanings */}
           <div className="space-y-2 sm:space-y-2.5" aria-label="Cột nghĩa tiếng Việt">
             <div className="text-[11px] sm:text-xs font-semibold text-slate-500 dark:text-slate-400">
               Nghĩa tiếng Việt
@@ -449,8 +494,8 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
           </div>
         </div>
       ) : (
-        /* Unified Tile Board: 'grid' (open tiles) or 'memory' (flip 2 cards -> disappear) */
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 sm:gap-3">
+        /* Strict 4x3 (grid) or 4x4 (memory) Matrix */
+        <div className="grid grid-cols-4 gap-1.5 sm:gap-2.5">
           {unifiedTiles.map((tile, idx) => {
             const isGone = Boolean(matchedIds[tile.cardId]);
             const isJustMatched = Boolean(justMatchedIds[tile.cardId]);
@@ -464,7 +509,7 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
                 <div
                   key={tile.uid}
                   aria-hidden="true"
-                  className="min-h-[92px] sm:min-h-[108px] rounded-xl border border-dashed border-slate-200/60 dark:border-slate-800/50"
+                  className="min-h-[76px] sm:min-h-[96px] rounded-xl border border-dashed border-slate-200/50 dark:border-slate-800/40"
                 />
               );
             }
@@ -496,25 +541,25 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
                 }}
                 transition={{ duration: 0.18 }}
                 onClick={() => handleSelectTile(tile)}
-                className={`flex min-h-[92px] sm:min-h-[108px] flex-col items-center justify-center rounded-xl border p-3 text-center transition-colors cursor-pointer ${cls}`}
+                className={`flex min-h-[76px] sm:min-h-[96px] flex-col items-center justify-center rounded-xl border p-1.5 sm:p-3 text-center transition-colors cursor-pointer ${cls}`}
               >
                 {isFaceUp ? (
                   <>
-                    <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">
+                    <span className="text-[9px] sm:text-[10px] font-semibold text-slate-400 dark:text-slate-500">
                       {tile.side === 'en' ? 'EN' : 'VI'}
                     </span>
                     <span
-                      className={`mt-1 leading-snug break-words ${
+                      className={`mt-0.5 sm:mt-1 leading-tight break-words line-clamp-3 ${
                         tile.side === 'en'
-                          ? 'font-display text-sm sm:text-base font-bold'
-                          : 'text-xs sm:text-sm font-medium'
+                          ? 'font-display text-[11px] sm:text-sm font-bold'
+                          : 'text-[10px] sm:text-xs font-medium'
                       }`}
                     >
                       {tile.label}
                     </span>
                   </>
                 ) : (
-                  <span className="font-mono-tabular text-sm font-semibold">
+                  <span className="font-mono-tabular text-xs sm:text-sm font-semibold">
                     #{idx + 1}
                   </span>
                 )}

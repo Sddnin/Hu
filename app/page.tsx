@@ -3,11 +3,13 @@
 import { useMemo, useState } from 'react';
 import { AccountModal, AccountTab } from '@/components/AccountModal';
 import { AuthModal } from '@/components/AuthModal';
+import { CommunityView } from '@/components/CommunityView';
 import { DecksView } from '@/components/DecksView';
 import { Header } from '@/components/Header';
+import { LeaderboardStreakView } from '@/components/LeaderboardStreakView';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
+import { OfflineIndicator } from '@/components/PWAControls';
 import { PracticeArena, PracticePoolFilter } from '@/components/PracticeArena';
-import { ProgressView } from '@/components/ProgressView';
 import { WorkspaceToolbar } from '@/components/WorkspaceToolbar';
 import { useFlashcardStore } from '@/hooks/use-flashcard-store';
 import { AppView, PracticeMode, StudySession, getTodayDateKey } from '@/lib/types';
@@ -69,7 +71,7 @@ export default function HomePage() {
 
   function handleStartPractice(
     deckId: string,
-    mode: PracticeMode,
+    mode: PracticeMode = 'flip',
     filter: PracticePoolFilter = 'all'
   ) {
     setSelectedDeckId(deckId);
@@ -82,15 +84,6 @@ export default function HomePage() {
     if (effectiveSelectedDeckId) {
       setSelectedDeckId(effectiveSelectedDeckId);
     }
-    setPoolFilter('all');
-    setActiveView('practice');
-  }
-
-  function handleStartTestFromNav() {
-    if (effectiveSelectedDeckId) {
-      setSelectedDeckId(effectiveSelectedDeckId);
-    }
-    setActiveMode('test');
     setPoolFilter('all');
     setActiveView('practice');
   }
@@ -145,6 +138,24 @@ export default function HomePage() {
             onUpdateCard={store.updateCard}
             onDeleteCard={store.deleteCard}
             onToggleStar={store.toggleCardStar}
+            onPublishDeckToCommunity={store.publishDeckToCommunity}
+            onGoToCommunity={() => setActiveView('community')}
+          />
+        ) : activeView === 'community' ? (
+          <CommunityView
+            user={store.user}
+            neonConfigured={store.neonConfigured}
+            communityDecks={store.communityDecks}
+            myDecks={store.decks}
+            myCardsByDeck={store.cardsByDeck}
+            leaderboardEntries={store.leaderboardEntries}
+            onPublishDeck={store.publishDeckToCommunity}
+            onUnpublishDeck={store.unpublishCommunityDeck}
+            onImportDeck={store.importCommunityDeck}
+            onStartPracticeDeck={(deckId, mode) =>
+              handleStartPractice(deckId, mode || 'flip')
+            }
+            onOpenAuth={() => setAuthModalOpen(true)}
           />
         ) : activeView === 'practice' ? (
           <PracticeArena
@@ -157,17 +168,22 @@ export default function HomePage() {
             onChangeMode={setActiveMode}
             poolFilter={poolFilter}
             onChangePoolFilter={setPoolFilter}
+            leaderboardEntries={store.leaderboardEntries}
             onToggleStar={store.toggleCardStar}
             onRecordResults={store.recordPracticeResults}
-            onViewProgress={() => setActiveView('progress')}
+            onSubmitLeaderboardScore={store.submitLeaderboardScore}
+            onViewLeaderboard={() => setActiveView('leaderboard')}
             onBackToDecks={() => setActiveView('decks')}
           />
         ) : (
-          <ProgressView
+          <LeaderboardStreakView
             decks={store.decks}
             cards={store.cards}
             sessions={store.sessions}
             dailyGoal={store.dailyGoal}
+            leaderboardEntries={store.leaderboardEntries}
+            streakLeaders={store.streakLeaders}
+            onRefreshLeaderboard={store.refreshLeaderboard}
             onUpdateDailyGoal={store.updateDailyGoal}
             onDeleteSession={store.deleteStudySession}
             onToggleStar={store.toggleCardStar}
@@ -178,16 +194,14 @@ export default function HomePage() {
 
       <footer className="hidden md:block border-t border-slate-200 bg-white py-5 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2 px-6">
-          <span>LexiCard · Luyện tập Flashcard thông minh</span>
+          <span>LexiCard · Luyện tập Flashcard & Mini-Games từ vựng</span>
           <span>Phím tắt: Space lật thẻ · A nghe phát âm · S gắn sao · 1 / 2 / 3 đánh giá</span>
         </div>
       </footer>
 
       <MobileBottomNav
         activeView={activeView}
-        activeMode={activeMode}
         onSelectView={setActiveView}
-        onStartTest={handleStartTestFromNav}
       />
 
       <AuthModal
@@ -213,6 +227,8 @@ export default function HomePage() {
           onImportBackup={store.importBackupDecks}
         />
       )}
+
+      <OfflineIndicator pendingSyncCount={store.pendingSyncCount} />
     </div>
   );
 }

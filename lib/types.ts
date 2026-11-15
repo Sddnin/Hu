@@ -7,9 +7,17 @@ export type PracticeMode =
   | 'fill'
   | 'match'
   | 'spell'
+  | 'blast'
+  | 'meteor'
   | 'test';
 
-export type AppView = 'decks' | 'practice' | 'progress';
+export type LeaderboardMode =
+  | PracticeMode
+  | 'match_columns'
+  | 'match_grid'
+  | 'match_memory';
+
+export type AppView = 'decks' | 'community' | 'practice' | 'leaderboard';
 
 export interface Deck {
   id: string;
@@ -54,6 +62,52 @@ export interface StudySession {
   completedAt: number;
 }
 
+export interface CommunityCardItem {
+  term: string;
+  phonetic: string;
+  partOfSpeech: string;
+  meaning: string;
+  example: string;
+}
+
+export interface CommunityDeck {
+  id: string;
+  sourceDeckId: string | null;
+  authorId: string;
+  authorName: string;
+  title: string;
+  description: string;
+  category: string;
+  cardCount: number;
+  downloadsCount: number;
+  cards: CommunityCardItem[];
+  publishedAt: number;
+}
+
+export interface LeaderboardEntry {
+  id: string;
+  userId: string | null;
+  playerName: string;
+  deckId: string;
+  deckTitle: string;
+  mode: LeaderboardMode;
+  score: number;
+  accuracy: number;
+  durationSeconds: number;
+  streak: number;
+  createdAt: number;
+}
+
+export interface StreakLeaderboardEntry {
+  userId: string;
+  displayName: string;
+  username: string;
+  streakDays: number;
+  totalSessions: number;
+  totalScore: number;
+  masteredCount: number;
+}
+
 export interface AuthUser {
   id: string;
   username: string;
@@ -86,7 +140,16 @@ export const MODE_LABELS: Record<PracticeMode, string> = {
   fill: 'Điền từ',
   match: 'Nối thẻ',
   spell: 'Nghe & Viết',
+  blast: 'Xếp khối Blast',
+  meteor: 'Bắn thiên thạch',
   test: 'Kiểm tra',
+};
+
+export const LEADERBOARD_MODE_LABELS: Record<LeaderboardMode, string> = {
+  ...MODE_LABELS,
+  match_columns: 'Nối 2 cột',
+  match_grid: 'Ghép thẻ 4×3',
+  match_memory: 'Lật thẻ 4×4',
 };
 
 export const MASTERY_LABELS: Record<MasteryLevel, string> = {

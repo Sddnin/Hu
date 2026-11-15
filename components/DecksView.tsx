@@ -14,6 +14,7 @@ import {
   Search,
   Star,
   Trash2,
+  UploadCloud,
   Volume2,
   X,
 } from 'lucide-react';
@@ -21,6 +22,8 @@ import { PracticePoolFilter } from '@/components/PracticeArena';
 import { speakEnglish } from '@/lib/speech';
 import {
   AuthUser,
+  CommunityCardItem,
+  CommunityDeck,
   Deck,
   Flashcard,
   LIMITS,
@@ -84,6 +87,14 @@ interface DecksViewProps {
   ) => Promise<void>;
   onDeleteCard: (card: Flashcard) => Promise<void>;
   onToggleStar: (card: Flashcard) => Promise<void>;
+  onPublishDeckToCommunity: (input: {
+    sourceDeckId?: string | null;
+    title: string;
+    description: string;
+    category: string;
+    cards: CommunityCardItem[];
+  }) => Promise<{ ok: boolean; error?: string; deck?: CommunityDeck }>;
+  onGoToCommunity: () => void;
 }
 
 export function DecksView({
@@ -103,6 +114,8 @@ export function DecksView({
   onUpdateCard,
   onDeleteCard,
   onToggleStar,
+  onPublishDeckToCommunity,
+  onGoToCommunity,
 }: DecksViewProps) {
   const activeDeck =
     decks.find((d) => d.id === selectedDeckId) || decks[0] || null;
@@ -110,6 +123,13 @@ export function DecksView({
     () => (activeDeck ? cardsByDeck[activeDeck.id] || [] : []),
     [activeDeck, cardsByDeck]
   );
+
+  const [publishingDeckId, setPublishingDeckId] = useState<string | null>(null);
+  const [publishFeedback, setPublishFeedback] = useState<{
+    deckId: string;
+    ok: boolean;
+    message: string;
+  } | null>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -481,6 +501,48 @@ export function DecksView({
                   <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                     <button
                       type="button"
+                      disabled={
+                        activeCards.length === 0 ||
+                        publishingDeckId === activeDeck.id
+                      }
+                      onClick={async () => {
+                        setPublishingDeckId(activeDeck.id);
+                        setPublishFeedback(null);
+                        const result = await onPublishDeckToCommunity({
+                          sourceDeckId: activeDeck.id,
+                          title: activeDeck.title,
+                          description: activeDeck.description,
+                          category: activeDeck.category,
+                          cards: activeCards.map((c) => ({
+                            term: c.term,
+                            phonetic: c.phonetic,
+                            partOfSpeech: c.partOfSpeech,
+                            meaning: c.meaning,
+                            example: c.example,
+                          })),
+                        });
+                        setPublishingDeckId(null);
+                        setPublishFeedback({
+                          deckId: activeDeck.id,
+                          ok: result.ok,
+                          message: result.ok
+                            ? 'Đã đăng bộ thẻ lên Kho thẻ cộng đồng!'
+                            : result.error || 'Không thể đăng tải bộ thẻ.',
+                        });
+                      }}
+                      title="Đăng tải bộ thẻ này lên Kho thẻ để mọi người cùng học"
+                      className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-100 disabled:opacity-40 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-300 dark:hover:bg-sky-950/70 whitespace-nowrap cursor-pointer"
+                    >
+                      <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>
+                        {publishingDeckId === activeDeck.id
+                          ? 'Đang đăng...'
+                          : 'Đăng Kho thẻ'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => openEditDeck(activeDeck)}
                       className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
                     >
@@ -591,21 +653,44 @@ export function DecksView({
                   </div>
                 </div>
 
-                {/* 7 Practice Modes Launcher Grid (Quizlet + OpenQuiz) */}
+                {publishFeedback && publishFeedback.deckId === activeDeck.id && (
+                  <div
+                    className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-xs ${
+                      publishFeedback.ok
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300'
+                        : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300'
+                    }`}
+                  >
+                    <span>{publishFeedback.message}</span>
+                    {publishFeedback.ok && (
+                      <button
+                        type="button"
+                        onClick={onGoToCommunity}
+                        className="font-semibold underline hover:no-underline cursor-pointer"
+                      >
+                        Mở Kho thẻ ngay
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Practice Modes & Mini-Games Launcher Grid */}
                 <div className="pt-1">
                   <div className="mb-2.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                    Chọn chế độ học & kiểm tra:
+                    Chọn chế độ học, trò chơi & kiểm tra:
                   </div>
-                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
                     {(
                       [
                         { id: 'flip', label: 'Lật thẻ 3D', hint: 'Tự chạy & vuốt thẻ' },
                         { id: 'learn', label: 'Học thông minh', hint: 'Lặp đến khi thuộc' },
                         { id: 'quiz', label: 'Trắc nghiệm', hint: '4 đáp án nhanh' },
                         { id: 'fill', label: 'Điền từ', hint: 'Theo câu ví dụ' },
-                        { id: 'match', label: 'Nối thẻ', hint: 'Ghép cặp Anh–Việt' },
+                        { id: 'match', label: 'Nối & Ghép thẻ', hint: 'Nối 2 cột · 4×3 · 4×4' },
                         { id: 'spell', label: 'Nghe & Viết', hint: 'Chính tả & phát âm' },
-                        { id: 'test', label: 'Kiểm tra', hint: 'Đề thi hẹn giờ' },
+                        { id: 'blast', label: 'Xếp khối Blast', hint: 'Lưới 8×8 ăn điểm BXH' },
+                        { id: 'meteor', label: 'Bắn thiên thạch', hint: 'Súng laser vũ trụ BXH' },
+                        { id: 'test', label: 'Kiểm tra', hint: 'Đề thi tổng hợp hẹn giờ' },
                       ] as const
                     ).map((m) => (
                       <button

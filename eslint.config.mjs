@@ -3,7 +3,14 @@ import next from "eslint-config-next";
 
 export default defineConfig([
   {
-    ignores: ["dist/**/*", ".next/**/*", "node_modules/**/*"],
+    ignores: [
+      "dist/**/*",
+      ".next/**/*",
+      "node_modules/**/*",
+      "public/sw.js",
+      "public/sw.js.map",
+      "public/swe-worker-*.js",
+    ],
   },
   ...next,
 ]);

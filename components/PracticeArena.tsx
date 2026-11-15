@@ -7,17 +7,28 @@ import {
   Clock,
   RotateCcw,
   Shuffle,
+  Sparkles,
   Star,
-  TrendingUp,
+  Trophy,
   Volume2,
   VolumeX,
   XCircle,
 } from 'lucide-react';
-import { Deck, Flashcard, MODE_LABELS, PracticeMode } from '@/lib/types';
+import {
+  Deck,
+  Flashcard,
+  LEADERBOARD_MODE_LABELS,
+  LeaderboardEntry,
+  LeaderboardMode,
+  MODE_LABELS,
+  PracticeMode,
+} from '@/lib/types';
+import { BlockBlastGame } from './practice/BlockBlastGame';
 import { FillBlankMode } from './practice/FillBlankMode';
 import { FlipMode, PracticeResultItem } from './practice/FlipMode';
 import { LearnMode } from './practice/LearnMode';
-import { MatchMode } from './practice/MatchMode';
+import { MatchMode, PracticeCompletionMeta } from './practice/MatchMode';
+import { MeteorShooterGame } from './practice/MeteorShooterGame';
 import { QuizMode } from './practice/QuizMode';
 import { SpellMode } from './practice/SpellMode';
 import { TestMode } from './practice/TestMode';
@@ -34,6 +45,7 @@ interface PracticeArenaProps {
   onChangeMode: (mode: PracticeMode) => void;
   poolFilter: PracticePoolFilter;
   onChangePoolFilter: (filter: PracticePoolFilter) => void;
+  leaderboardEntries: LeaderboardEntry[];
   onToggleStar: (card: Flashcard) => Promise<void>;
   onRecordResults: (params: {
     deck: Deck;
@@ -43,17 +55,65 @@ interface PracticeArenaProps {
     correctCount: number;
     durationSeconds: number;
   }) => Promise<void>;
-  onViewProgress: () => void;
+  onSubmitLeaderboardScore: (input: {
+    deckId: string;
+    deckTitle: string;
+    mode: LeaderboardMode;
+    score: number;
+    accuracy: number;
+    durationSeconds: number;
+    streak?: number;
+  }) => Promise<void>;
+  onViewLeaderboard: () => void;
   onBackToDecks: () => void;
 }
 
-function shuffleCards(list: Flashcard[]): Flashcard[] {
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleCards(list: Flashcard[], seed = 1): Flashcard[] {
   const copy = [...list];
+  const rand = mulberry32(seed || 1);
   for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rand() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
+}
+
+function getSmartPriorityTier(card: Flashcard): number {
+  if (card.mastery === 'new') return 0;
+  if (card.mastery === 'learning') {
+    const acc = card.reviewCount > 0 ? card.correctCount / card.reviewCount : 0;
+    return acc < 0.7 ? 1 : 2;
+  }
+  return 3;
+}
+
+function smartShuffleCards(list: Flashcard[], seed = 1): Flashcard[] {
+  const buckets: [Flashcard[], Flashcard[], Flashcard[], Flashcard[]] = [
+    [],
+    [],
+    [],
+    [],
+  ];
+  for (const card of list) {
+    buckets[getSmartPriorityTier(card)].push(card);
+  }
+  return [
+    ...shuffleCards(buckets[0], seed + 11),
+    ...shuffleCards(buckets[1], seed + 37),
+    ...shuffleCards(buckets[2], seed + 73),
+    ...shuffleCards(buckets[3], seed + 109),
+  ];
 }
 
 function formatDuration(sec: number): string {
@@ -72,9 +132,11 @@ export function PracticeArena({
   onChangeMode,
   poolFilter,
   onChangePoolFilter,
+  leaderboardEntries,
   onToggleStar,
   onRecordResults,
-  onViewProgress,
+  onSubmitLeaderboardScore,
+  onViewLeaderboard,
   onBackToDecks,
 }: PracticeArenaProps) {
   const activeDeck =
@@ -86,10 +148,13 @@ export function PracticeArena({
   );
 
   const [autoSpeak, setAutoSpeak] = useState(false);
+  const [smartShuffle, setSmartShuffle] = useState(true);
+  const [showDeckLeaderboard, setShowDeckLeaderboard] = useState(false);
+  const [deckLbModeFilter, setDeckLbModeFilter] = useState<'all' | LeaderboardMode>('all');
   const [focusedMissedIds, setFocusedMissedIds] = useState<string[] | null>(
     null
   );
-  const [shuffleSeed, setShuffleSeed] = useState(0);
+  const [shuffleSeed, setShuffleSeed] = useState(1);
   const [sessionKey, setSessionKey] = useState(1);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [summary, setSummary] = useState<{
@@ -98,6 +163,8 @@ export function PracticeArena({
     totalItems: number;
     accuracy: number;
     durationSeconds: number;
+    score: number;
+    leaderboardMode: LeaderboardMode;
     saved: boolean;
   } | null>(null);
 
@@ -106,7 +173,8 @@ export function PracticeArena({
       const missedSet = new Set(focusedMissedIds);
       const missed = deckCards.filter((c) => missedSet.has(c.id));
       if (missed.length > 0) {
-        return shuffleSeed > 0 ? shuffleCards(missed) : missed;
+        if (smartShuffle) return smartShuffleCards(missed, shuffleSeed || 1);
+        return shuffleSeed > 0 ? shuffleCards(missed, shuffleSeed) : missed;
       }
     }
 
@@ -123,8 +191,43 @@ export function PracticeArena({
       );
       if (weak.length > 0) filtered = weak;
     }
-    return shuffleSeed > 0 ? shuffleCards(filtered) : filtered;
-  }, [deckCards, poolFilter, focusedMissedIds, shuffleSeed]);
+
+    if (smartShuffle) {
+      return smartShuffleCards(filtered, shuffleSeed || 1);
+    }
+    return shuffleSeed > 0 ? shuffleCards(filtered, shuffleSeed) : filtered;
+  }, [deckCards, poolFilter, focusedMissedIds, smartShuffle, shuffleSeed]);
+
+  const deckLeaderboard = useMemo(() => {
+    if (!activeDeck) return [];
+    return leaderboardEntries
+      .filter(
+        (entry) =>
+          entry.deckId === activeDeck.id &&
+          (deckLbModeFilter === 'all' || entry.mode === deckLbModeFilter)
+      )
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          b.accuracy - a.accuracy ||
+          a.durationSeconds - b.durationSeconds
+      )
+      .slice(0, 12);
+  }, [activeDeck, leaderboardEntries, deckLbModeFilter]);
+
+  const blastBestScore = useMemo(() => {
+    if (!activeDeck) return 0;
+    return leaderboardEntries
+      .filter((e) => e.deckId === activeDeck.id && e.mode === 'blast')
+      .reduce((max, e) => Math.max(max, e.score), 0);
+  }, [activeDeck, leaderboardEntries]);
+
+  const meteorBestScore = useMemo(() => {
+    if (!activeDeck) return 0;
+    return leaderboardEntries
+      .filter((e) => e.deckId === activeDeck.id && e.mode === 'meteor')
+      .reduce((max, e) => Math.max(max, e.score), 0);
+  }, [activeDeck, leaderboardEntries]);
 
   const resetSessionState = (nextShuffle = false, clearMissed = true) => {
     if (nextShuffle) setShuffleSeed((s) => s + 1);
@@ -133,6 +236,19 @@ export function PracticeArena({
     setElapsedSeconds(0);
     setSummary(null);
   };
+
+  function handleToggleSmartShuffle() {
+    const next = !smartShuffle;
+    setSmartShuffle(next);
+    if (next) {
+      setShuffleSeed((s) => (s > 0 ? s + 1 : 1));
+    } else {
+      setShuffleSeed(0);
+    }
+    setSessionKey((k) => k + 1);
+    setElapsedSeconds(0);
+    setSummary(null);
+  }
 
   // Live session timer while practicing
   useEffect(() => {
@@ -143,13 +259,20 @@ export function PracticeArena({
     return () => window.clearInterval(id);
   }, [summary, practicePool.length]);
 
-  async function handleComplete(results: PracticeResultItem[]) {
+  async function handleComplete(
+    results: PracticeResultItem[],
+    meta?: PracticeCompletionMeta
+  ) {
     if (!activeDeck) return;
     const totalItems = results.length;
     const correctCount = results.filter((r) => r.isCorrect).length;
     const accuracy =
       totalItems > 0 ? Math.round((correctCount / totalItems) * 100) : 0;
     const duration = Math.max(1, elapsedSeconds);
+    const finalScore =
+      meta?.score ??
+      Math.max(0, correctCount * 100 + accuracy - Math.min(180, duration));
+    const lbMode: LeaderboardMode = meta?.leaderboardMode ?? activeMode;
 
     setSummary({
       results,
@@ -157,17 +280,30 @@ export function PracticeArena({
       totalItems,
       accuracy,
       durationSeconds: duration,
+      score: finalScore,
+      leaderboardMode: lbMode,
       saved: false,
     });
 
-    await onRecordResults({
-      deck: activeDeck,
-      mode: activeMode,
-      results,
-      totalItems,
-      correctCount,
-      durationSeconds: duration,
-    });
+    await Promise.all([
+      onRecordResults({
+        deck: activeDeck,
+        mode: activeMode,
+        results,
+        totalItems,
+        correctCount,
+        durationSeconds: duration,
+      }),
+      onSubmitLeaderboardScore({
+        deckId: activeDeck.id,
+        deckTitle: activeDeck.title,
+        mode: lbMode,
+        score: finalScore,
+        accuracy,
+        durationSeconds: duration,
+        streak: meta?.maxStreak ?? 0,
+      }),
+    ]);
 
     setSummary((prev) => (prev ? { ...prev, saved: true } : null));
   }
@@ -204,6 +340,10 @@ export function PracticeArena({
   const weakTotal = deckCards.filter(
     (c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7
   ).length;
+  const lowerMasteryCount = practicePool.filter(
+    (c) => c.mastery !== 'mastered'
+  ).length;
+  const masteredInPoolCount = practicePool.length - lowerMasteryCount;
   const missedCountInSummary = summary
     ? summary.results.filter((r) => !r.isCorrect).length
     : 0;
@@ -229,6 +369,16 @@ export function PracticeArena({
             <h1 className="mt-0.5 font-display text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
               {MODE_LABELS[activeMode]}
             </h1>
+            {smartShuffle && practicePool.length > 0 && (
+              <p className="mt-1 flex items-center gap-1.5 text-xs text-sky-700 dark:text-sky-400">
+                <Sparkles className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  {masteredInPoolCount > 0 && lowerMasteryCount > 0
+                    ? `Xáo trộn thông minh: ưu tiên ${lowerMasteryCount} thẻ mới/đang học trước ${masteredInPoolCount} thẻ đã thuộc`
+                    : 'Xáo trộn thông minh đang bật · Ưu tiên thẻ yếu hơn lên trước'}
+                </span>
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -236,6 +386,20 @@ export function PracticeArena({
               <Clock className="h-3.5 w-3.5 text-slate-400" aria-hidden="true" />
               <span>{formatDuration(elapsedSeconds)}</span>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setShowDeckLeaderboard((v) => !v)}
+              aria-expanded={showDeckLeaderboard}
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                showDeckLeaderboard
+                  ? 'border-amber-500 bg-amber-50 text-amber-800 dark:border-amber-500 dark:bg-amber-950/40 dark:text-amber-300'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              <Trophy className="h-3.5 w-3.5 text-amber-500" aria-hidden="true" />
+              <span>BXH bộ này</span>
+            </button>
 
             <button
               type="button"
@@ -258,7 +422,27 @@ export function PracticeArena({
 
             <button
               type="button"
+              onClick={handleToggleSmartShuffle}
+              aria-pressed={smartShuffle}
+              title="Ưu tiên thẻ mới và thẻ hay sai xuất hiện trước thẻ đã thuộc"
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                smartShuffle
+                  ? 'border-sky-600 bg-sky-50 text-sky-700 dark:border-sky-500 dark:bg-sky-950/40 dark:text-sky-300'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Thông minh</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => resetSessionState(true, false)}
+              title={
+                smartShuffle
+                  ? 'Xáo trộn lại trong từng nhóm mức độ thuộc'
+                  : 'Xáo trộn ngẫu nhiên toàn bộ thẻ'
+              }
               className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
             >
               <Shuffle className="h-3.5 w-3.5" aria-hidden="true" />
@@ -301,6 +485,8 @@ export function PracticeArena({
                 { id: 'fill', label: 'Điền từ' },
                 { id: 'match', label: 'Nối thẻ' },
                 { id: 'spell', label: 'Nghe & Viết' },
+                { id: 'blast', label: 'Xếp khối Blast' },
+                { id: 'meteor', label: 'Bắn thiên thạch' },
                 { id: 'test', label: 'Kiểm tra' },
               ] as const
             ).map((m) => (
@@ -350,6 +536,100 @@ export function PracticeArena({
         </div>
       </div>
 
+      {/* Inline Deck Leaderboard Panel */}
+      {showDeckLeaderboard && (
+        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/40 p-4 dark:border-amber-900/60 dark:bg-slate-900 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Trophy className="h-4 w-4 text-amber-500" aria-hidden="true" />
+              <h2 className="font-display text-base font-bold text-slate-900 dark:text-slate-100">
+                Bảng xếp hạng bộ “{activeDeck.title}”
+              </h2>
+            </div>
+
+            <button
+              type="button"
+              onClick={onViewLeaderboard}
+              className="text-xs font-semibold text-sky-600 hover:underline dark:text-sky-400 cursor-pointer whitespace-nowrap"
+            >
+              Mở BXH & Chuỗi toàn bộ
+            </button>
+          </div>
+
+          <div className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1">
+            {(
+              [
+                { id: 'all', label: 'Tất cả chế độ' },
+                { id: 'blast', label: 'Xếp khối Blast' },
+                { id: 'meteor', label: 'Bắn thiên thạch' },
+                { id: 'match_grid', label: 'Ghép thẻ 4×3' },
+                { id: 'match_memory', label: 'Lật thẻ 4×4' },
+                { id: 'match_columns', label: 'Nối 2 cột' },
+                { id: 'test', label: 'Kiểm tra' },
+                { id: 'quiz', label: 'Trắc nghiệm' },
+              ] as const
+            ).map((filter) => (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => setDeckLbModeFilter(filter.id)}
+                className={`min-h-[32px] rounded-lg px-2.5 py-1 text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer ${
+                  deckLbModeFilter === filter.id
+                    ? 'bg-amber-500 text-slate-950'
+                    : 'bg-white text-slate-700 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          {deckLeaderboard.length === 0 ? (
+            <p className="mt-3 text-xs text-slate-600 dark:text-slate-400">
+              Chưa có điểm nào cho bộ lọc này. Hãy hoàn thành một lượt chơi để ghi danh!
+            </p>
+          ) : (
+            <div className="mt-3 divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-950/60">
+              {deckLeaderboard.map((entry, idx) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between gap-3 px-3.5 py-2.5 text-xs"
+                >
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span
+                      className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono-tabular font-bold ${
+                        idx === 0
+                          ? 'bg-amber-400/20 text-amber-700 dark:text-amber-300'
+                          : idx === 1
+                            ? 'bg-slate-300/30 text-slate-700 dark:text-slate-200'
+                            : idx === 2
+                              ? 'bg-orange-400/20 text-orange-700 dark:text-orange-300'
+                              : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                      }`}
+                    >
+                      #{idx + 1}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="truncate font-semibold text-slate-900 dark:text-slate-100">
+                        {entry.playerName}
+                      </div>
+                      <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+                        {LEADERBOARD_MODE_LABELS[entry.mode]} · {entry.accuracy}% ·{' '}
+                        {formatDuration(entry.durationSeconds)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="font-mono-tabular text-sm font-bold text-amber-600 dark:text-amber-400 shrink-0">
+                    {entry.score}đ
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Empty Deck Guard */}
       {practicePool.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center dark:border-slate-800 dark:bg-slate-900">
@@ -375,14 +655,22 @@ export function PracticeArena({
               Hoàn thành phiên luyện tập
             </h2>
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-              {activeDeck.title} · {MODE_LABELS[activeMode]} ·{' '}
+              {activeDeck.title} · {LEADERBOARD_MODE_LABELS[summary.leaderboardMode]} ·{' '}
               {summary.saved
-                ? 'Đã lưu vào Lịch sử học tập'
+                ? 'Đã lưu vào Lịch sử & Bảng xếp hạng'
                 : 'Đang lưu kết quả...'}
             </p>
           </div>
 
-          <div className="mt-6 grid grid-cols-3 gap-3 border-y border-slate-200 py-5 dark:border-slate-800">
+          <div className="mt-6 grid grid-cols-2 gap-3 border-y border-slate-200 py-5 dark:border-slate-800 sm:grid-cols-4">
+            <div className="text-center">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Điểm BXH
+              </div>
+              <div className="mt-1 font-mono-tabular text-2xl font-bold text-amber-600 dark:text-amber-400">
+                {summary.score}
+              </div>
+            </div>
             <div className="text-center">
               <div className="text-xs text-slate-500 dark:text-slate-400">
                 Độ chính xác
@@ -496,11 +784,11 @@ export function PracticeArena({
 
             <button
               type="button"
-              onClick={onViewProgress}
+              onClick={onViewLeaderboard}
               className="inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700 cursor-pointer"
             >
-              <TrendingUp className="h-4 w-4" aria-hidden="true" />
-              <span>Xem lịch sử</span>
+              <Trophy className="h-4 w-4 text-amber-500" aria-hidden="true" />
+              <span>Xem BXH & Chuỗi</span>
             </button>
           </div>
         </div>
@@ -538,6 +826,24 @@ export function PracticeArena({
           )}
           {activeMode === 'spell' && (
             <SpellMode cards={practicePool} onComplete={handleComplete} />
+          )}
+          {activeMode === 'blast' && (
+            <BlockBlastGame
+              cards={practicePool}
+              allPoolCards={allCards}
+              bestScore={blastBestScore}
+              autoSpeak={autoSpeak}
+              onComplete={handleComplete}
+            />
+          )}
+          {activeMode === 'meteor' && (
+            <MeteorShooterGame
+              cards={practicePool}
+              allPoolCards={allCards}
+              bestScore={meteorBestScore}
+              autoSpeak={autoSpeak}
+              onComplete={handleComplete}
+            />
           )}
           {activeMode === 'test' && (
             <TestMode

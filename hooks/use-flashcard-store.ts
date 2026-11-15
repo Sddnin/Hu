@@ -1,14 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { buildCommunityStarterDecks } from '@/lib/community-seed';
 import { buildStarterData } from '@/lib/seed-data';
 import {
   AuthUser,
+  CommunityCardItem,
+  CommunityDeck,
   Deck,
   Flashcard,
   LIMITS,
+  LeaderboardEntry,
+  LeaderboardMode,
   MasteryLevel,
   PracticeMode,
+  StreakLeaderboardEntry,
   StudySession,
   getTodayDateKey,
   sanitizeId,
@@ -19,6 +25,77 @@ const LS_CARDS = 'lexicard_cards_v1';
 const LS_SESSIONS = 'lexicard_sessions_v1';
 const LS_GOAL = 'lexicard_goal_v1';
 const LS_THEME = 'lexicard_theme';
+const LS_ACCOUNT_CACHE = 'lexicard_account_cache_v1';
+const LS_PENDING_SYNC = 'lexicard_pending_sync_v1';
+const LS_COMMUNITY = 'lexicard_community_v1';
+const LS_LEADERBOARD = 'lexicard_leaderboard_v1';
+
+interface PendingSyncItem {
+  id: string;
+  url: string;
+  method: 'POST' | 'PATCH' | 'DELETE';
+  body?: unknown;
+  createdAt: number;
+}
+
+interface AccountCacheSnapshot {
+  user: AuthUser;
+  decks: Deck[];
+  cards: Flashcard[];
+  sessions: StudySession[];
+  cachedAt: number;
+}
+
+function readAccountCache(): AccountCacheSnapshot | null {
+  try {
+    const raw = localStorage.getItem(LS_ACCOUNT_CACHE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AccountCacheSnapshot;
+    if (!parsed || !parsed.user?.id) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeAccountCache(snapshot: AccountCacheSnapshot) {
+  try {
+    localStorage.setItem(LS_ACCOUNT_CACHE, JSON.stringify(snapshot));
+  } catch {
+    // Ignore quota errors
+  }
+}
+
+function clearAccountCache() {
+  try {
+    localStorage.removeItem(LS_ACCOUNT_CACHE);
+  } catch {
+    // Ignore
+  }
+}
+
+function readPendingQueue(): PendingSyncItem[] {
+  try {
+    const raw = localStorage.getItem(LS_PENDING_SYNC);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePendingQueue(queue: PendingSyncItem[]) {
+  try {
+    if (queue.length === 0) {
+      localStorage.removeItem(LS_PENDING_SYNC);
+    } else {
+      localStorage.setItem(LS_PENDING_SYNC, JSON.stringify(queue));
+    }
+  } catch {
+    // Ignore quota errors
+  }
+}
 
 function clampString(val: string, max: number): string {
   return val.trim().slice(0, max);
@@ -41,11 +118,15 @@ export function useFlashcardStore() {
   const [neonConfigured, setNeonConfigured] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   const [decks, setDecks] = useState<Deck[]>([]);
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [sessions, setSessions] = useState<StudySession[]>([]);
   const [dailyGoal, setDailyGoal] = useState<number>(20);
+  const [communityDecks, setCommunityDecks] = useState<CommunityDeck[]>([]);
+  const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
+  const [streakLeaders, setStreakLeaders] = useState<StreakLeaderboardEntry[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
   const loadLocalGuestSnapshot = useCallback(() => {
@@ -86,7 +167,97 @@ export function useFlashcardStore() {
     }
   }, []);
 
-  // Initialize theme + local guest data + check Neon session cookie
+  const enqueuePendingSync = useCallback(
+    (item: Omit<PendingSyncItem, 'id' | 'createdAt'>) => {
+      const next = [
+        ...readPendingQueue(),
+        {
+          ...item,
+          id: createUniqueId('sync'),
+          createdAt: Date.now(),
+        },
+      ];
+      writePendingQueue(next);
+      setPendingSyncCount(next.length);
+    },
+    []
+  );
+
+  const flushPendingSync = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    const queue = readPendingQueue();
+    if (queue.length === 0) {
+      setPendingSyncCount(0);
+      return;
+    }
+
+    setSyncing(true);
+    const remaining: PendingSyncItem[] = [];
+    for (let i = 0; i < queue.length; i++) {
+      const item = queue[i];
+      try {
+        const res = await fetch(item.url, {
+          method: item.method,
+          headers:
+            item.body !== undefined
+              ? { 'Content-Type': 'application/json' }
+              : undefined,
+          body: item.body !== undefined ? JSON.stringify(item.body) : undefined,
+        });
+        if (!res.ok && res.status >= 500) {
+          remaining.push(...queue.slice(i));
+          break;
+        }
+      } catch {
+        remaining.push(...queue.slice(i));
+        break;
+      }
+    }
+    writePendingQueue(remaining);
+    setPendingSyncCount(remaining.length);
+    setSyncing(false);
+  }, []);
+
+  const syncMutation = useCallback(
+    async (
+      url: string,
+      method: 'POST' | 'PATCH' | 'DELETE',
+      body: unknown | undefined,
+      errorMessage: string
+    ) => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        enqueuePendingSync({ url, method, body });
+        return;
+      }
+
+      setSyncing(true);
+      setSyncError(null);
+      try {
+        const res = await fetch(url, {
+          method,
+          headers:
+            body !== undefined
+              ? { 'Content-Type': 'application/json' }
+              : undefined,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+        });
+        if (!res.ok) {
+          if (res.status >= 500) {
+            enqueuePendingSync({ url, method, body });
+          } else {
+            setSyncError(errorMessage);
+          }
+        }
+      } catch {
+        enqueuePendingSync({ url, method, body });
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [enqueuePendingSync]
+  );
+
+  // Initialize theme + local guest/offline data + check Neon session cookie
   useEffect(() => {
     let cancelled = false;
 
@@ -94,12 +265,56 @@ export function useFlashcardStore() {
       if (cancelled) return;
       const isDark = document.documentElement.classList.contains('dark');
       setTheme(isDark ? 'dark' : 'light');
-      loadLocalGuestSnapshot();
+
+      const cachedAccount = readAccountCache();
+      if (cachedAccount) {
+        setUser(cachedAccount.user);
+        setDecks(cachedAccount.decks);
+        setCards(cachedAccount.cards);
+        setSessions(cachedAccount.sessions);
+        if (typeof cachedAccount.user.dailyGoal === 'number') {
+          setDailyGoal(cachedAccount.user.dailyGoal);
+        }
+      } else {
+        loadLocalGuestSnapshot();
+      }
+      setPendingSyncCount(readPendingQueue().length);
+
+      try {
+        const rawComm = localStorage.getItem(LS_COMMUNITY);
+        if (rawComm) {
+          const parsed = JSON.parse(rawComm);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setCommunityDecks(parsed);
+          } else {
+            setCommunityDecks(buildCommunityStarterDecks());
+          }
+        } else {
+          setCommunityDecks(buildCommunityStarterDecks());
+        }
+      } catch {
+        setCommunityDecks(buildCommunityStarterDecks());
+      }
+
+      try {
+        const rawLb = localStorage.getItem(LS_LEADERBOARD);
+        if (rawLb) {
+          const parsed = JSON.parse(rawLb);
+          if (Array.isArray(parsed)) setLeaderboardEntries(parsed);
+        }
+      } catch {
+        // Ignore
+      }
+
       setHydrated(true);
     });
 
     async function checkSession() {
       try {
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+          if (!cancelled) setAuthReady(true);
+          return;
+        }
         const res = await fetch('/api/auth/me', { cache: 'no-store' });
         if (!res.ok) {
           if (!cancelled) setAuthReady(true);
@@ -110,16 +325,33 @@ export function useFlashcardStore() {
 
         setNeonConfigured(Boolean(data.configured));
         if (data.user) {
+          const nextDecks = Array.isArray(data.decks) ? data.decks : [];
+          const nextCards = Array.isArray(data.cards) ? data.cards : [];
+          const nextSessions = Array.isArray(data.sessions) ? data.sessions : [];
           setUser(data.user);
-          setDecks(Array.isArray(data.decks) ? data.decks : []);
-          setCards(Array.isArray(data.cards) ? data.cards : []);
-          setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+          setDecks(nextDecks);
+          setCards(nextCards);
+          setSessions(nextSessions);
           if (typeof data.user.dailyGoal === 'number') {
             setDailyGoal(data.user.dailyGoal);
           }
+          writeAccountCache({
+            user: data.user,
+            decks: nextDecks,
+            cards: nextCards,
+            sessions: nextSessions,
+            cachedAt: Date.now(),
+          });
+          await flushPendingSync();
+        } else {
+          clearAccountCache();
+          writePendingQueue([]);
+          setPendingSyncCount(0);
+          setUser(null);
+          loadLocalGuestSnapshot();
         }
       } catch {
-        // Keep guest mode available
+        // Offline or unreachable: preserve cached account or local guest snapshot
       } finally {
         if (!cancelled) setAuthReady(true);
       }
@@ -127,14 +359,78 @@ export function useFlashcardStore() {
 
     checkSession();
 
+    async function loadPublicData() {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      try {
+        const [commRes, lbRes] = await Promise.all([
+          fetch('/api/community', { cache: 'no-store' }),
+          fetch('/api/leaderboard?limit=40', { cache: 'no-store' }),
+        ]);
+        if (!cancelled && commRes.ok) {
+          const commData = await commRes.json();
+          if (Array.isArray(commData.decks) && commData.decks.length > 0) {
+            setCommunityDecks((prev) => {
+              const localCustom = prev.filter(
+                (p) =>
+                  p.authorId === 'local' &&
+                  !commData.decks.some((d: CommunityDeck) => d.id === p.id)
+              );
+              return [...localCustom, ...commData.decks];
+            });
+          }
+        }
+        if (!cancelled && lbRes.ok) {
+          const lbData = await lbRes.json();
+          if (Array.isArray(lbData.entries)) {
+            setLeaderboardEntries((prev) => {
+              const serverIds = new Set(
+                lbData.entries.map((e: LeaderboardEntry) => e.id)
+              );
+              const localOnly = prev.filter((e) => !serverIds.has(e.id));
+              return [...lbData.entries, ...localOnly].sort(
+                (a, b) =>
+                  b.score - a.score ||
+                  b.accuracy - a.accuracy ||
+                  a.durationSeconds - b.durationSeconds
+              );
+            });
+          }
+          if (Array.isArray(lbData.streakLeaders)) {
+            setStreakLeaders(lbData.streakLeaders);
+          }
+        }
+      } catch {
+        // Offline / fallback preserved
+      }
+    }
+
+    loadPublicData();
+
+    const handleOnline = () => {
+      flushPendingSync();
+      loadPublicData();
+    };
+    window.addEventListener('online', handleOnline);
+
     return () => {
       cancelled = true;
+      window.removeEventListener('online', handleOnline);
     };
-  }, [loadLocalGuestSnapshot]);
+  }, [loadLocalGuestSnapshot, flushPendingSync]);
 
-  // Persist local guest mode state to localStorage when not signed in
+  // Persist local guest mode OR signed-in offline snapshot to localStorage
   useEffect(() => {
-    if (!hydrated || !authReady || user) return;
+    if (!hydrated || !authReady) return;
+    if (user) {
+      writeAccountCache({
+        user,
+        decks,
+        cards,
+        sessions,
+        cachedAt: Date.now(),
+      });
+      return;
+    }
     try {
       localStorage.setItem(LS_DECKS, JSON.stringify(decks));
       localStorage.setItem(LS_CARDS, JSON.stringify(cards));
@@ -260,6 +556,9 @@ export function useFlashcardStore() {
     } catch {
       // Ignore network errors on logout
     }
+    clearAccountCache();
+    writePendingQueue([]);
+    setPendingSyncCount(0);
     setUser(null);
     loadLocalGuestSnapshot();
   }, [loadLocalGuestSnapshot]);
@@ -302,31 +601,16 @@ export function useFlashcardStore() {
       setDecks((prev) => [...prev, optimisticDeck]);
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const res = await fetch('/api/decks', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: deckId,
-              title,
-              description,
-              category,
-            }),
-          });
-          if (!res.ok) {
-            setSyncError('Không thể lưu bộ thẻ lên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi lưu bộ thẻ.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          '/api/decks',
+          'POST',
+          { id: deckId, title, description, category },
+          'Không thể lưu bộ thẻ lên Neon.'
+        );
       }
       return deckId;
     },
-    [user]
+    [user, syncMutation]
   );
 
   // CRUD: Update Deck
@@ -351,25 +635,15 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title, description, category }),
-          });
-          if (!res.ok) {
-            setSyncError('Không thể cập nhật bộ thẻ trên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi cập nhật bộ thẻ.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          `/api/decks/${encodeURIComponent(deckId)}`,
+          'PATCH',
+          { title, description, category },
+          'Không thể cập nhật bộ thẻ trên Neon.'
+        );
       }
     },
-    [user]
+    [user, syncMutation]
   );
 
   // CRUD: Delete Deck
@@ -379,23 +653,15 @@ export function useFlashcardStore() {
       setCards((prev) => prev.filter((c) => c.deckId !== deckId));
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}`, {
-            method: 'DELETE',
-          });
-          if (!res.ok) {
-            setSyncError('Không thể xóa bộ thẻ trên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi xóa bộ thẻ.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          `/api/decks/${encodeURIComponent(deckId)}`,
+          'DELETE',
+          undefined,
+          'Không thể xóa bộ thẻ trên Neon.'
+        );
       }
     },
-    [user]
+    [user, syncMutation]
   );
 
   // CRUD: Add Card
@@ -450,33 +716,23 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const res = await fetch('/api/cards', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              id: cardId,
-              deckId,
-              term,
-              phonetic,
-              partOfSpeech,
-              meaning,
-              example,
-            }),
-          });
-          if (!res.ok) {
-            setSyncError('Không thể lưu thẻ lên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi lưu thẻ.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          '/api/cards',
+          'POST',
+          {
+            id: cardId,
+            deckId,
+            term,
+            phonetic,
+            partOfSpeech,
+            meaning,
+            example,
+          },
+          'Không thể lưu thẻ lên Neon.'
+        );
       }
     },
-    [user, cards]
+    [user, cards, syncMutation]
   );
 
   // CRUD: Bulk Import Cards
@@ -527,35 +783,25 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const res = await fetch('/api/cards', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              deckId,
-              items: created.map((c) => ({
-                id: c.id,
-                term: c.term,
-                phonetic: c.phonetic,
-                partOfSpeech: c.partOfSpeech,
-                meaning: c.meaning,
-                example: c.example,
-              })),
-            }),
-          });
-          if (!res.ok) {
-            setSyncError('Không thể nhập hàng loạt lên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi nhập thẻ.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          '/api/cards',
+          'POST',
+          {
+            deckId,
+            items: created.map((c) => ({
+              id: c.id,
+              term: c.term,
+              phonetic: c.phonetic,
+              partOfSpeech: c.partOfSpeech,
+              meaning: c.meaning,
+              example: c.example,
+            })),
+          },
+          'Không thể nhập hàng loạt lên Neon.'
+        );
       }
     },
-    [user, cards]
+    [user, cards, syncMutation]
   );
 
   // CRUD: Update Card Content
@@ -594,31 +840,15 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const res = await fetch(`/api/cards/${encodeURIComponent(card.id)}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              term,
-              phonetic,
-              partOfSpeech,
-              meaning,
-              example,
-            }),
-          });
-          if (!res.ok) {
-            setSyncError('Không thể cập nhật thẻ trên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi cập nhật thẻ.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          `/api/cards/${encodeURIComponent(card.id)}`,
+          'PATCH',
+          { term, phonetic, partOfSpeech, meaning, example },
+          'Không thể cập nhật thẻ trên Neon.'
+        );
       }
     },
-    [user]
+    [user, syncMutation]
   );
 
   // CRUD: Delete Card
@@ -648,23 +878,15 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const res = await fetch(`/api/cards/${encodeURIComponent(card.id)}`, {
-            method: 'DELETE',
-          });
-          if (!res.ok) {
-            setSyncError('Không thể xóa thẻ trên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi xóa thẻ.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          `/api/cards/${encodeURIComponent(card.id)}`,
+          'DELETE',
+          undefined,
+          'Không thể xóa thẻ trên Neon.'
+        );
       }
     },
-    [user, cards]
+    [user, cards, syncMutation]
   );
 
   // Toggle Starred on a card
@@ -682,21 +904,15 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        try {
-          const res = await fetch(`/api/cards/${encodeURIComponent(card.id)}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ starred: nextStarred }),
-          });
-          if (!res.ok) {
-            setSyncError('Không thể lưu trạng thái gắn sao.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi lưu trạng thái gắn sao.');
-        }
+        await syncMutation(
+          `/api/cards/${encodeURIComponent(card.id)}`,
+          'PATCH',
+          { starred: nextStarred },
+          'Không thể lưu trạng thái gắn sao.'
+        );
       }
     },
-    [user]
+    [user, syncMutation]
   );
 
   // Duplicate Deck (Quizlet-style clone)
@@ -887,44 +1103,34 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const cardUpdates = updatedDeckCards
-            .filter((c) => resultMap.has(c.id))
-            .map((c) => ({
-              id: c.id,
-              mastery: c.mastery,
-              reviewCount: c.reviewCount,
-              correctCount: c.correctCount,
-            }));
+        const cardUpdates = updatedDeckCards
+          .filter((c) => resultMap.has(c.id))
+          .map((c) => ({
+            id: c.id,
+            mastery: c.mastery,
+            reviewCount: c.reviewCount,
+            correctCount: c.correctCount,
+          }));
 
-          const res = await fetch('/api/practice', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionId,
-              deckId: deck.id,
-              deckTitle: deck.title,
-              mode,
-              totalItems: safeTotal,
-              correctCount: safeCorrect,
-              durationSeconds: safeDuration,
-              dateKey,
-              cardUpdates,
-            }),
-          });
-          if (!res.ok) {
-            setSyncError('Không thể lưu lịch sử học lên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi lưu lịch sử học.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          '/api/practice',
+          'POST',
+          {
+            sessionId,
+            deckId: deck.id,
+            deckTitle: deck.title,
+            mode,
+            totalItems: safeTotal,
+            correctCount: safeCorrect,
+            durationSeconds: safeDuration,
+            dateKey,
+            cardUpdates,
+          },
+          'Không thể lưu lịch sử học lên Neon.'
+        );
       }
     },
-    [user, cards]
+    [user, cards, syncMutation]
   );
 
   const deleteStudySession = useCallback(
@@ -932,20 +1138,15 @@ export function useFlashcardStore() {
       setSessions((prev) => prev.filter((s) => s.id !== sessionId));
 
       if (user) {
-        try {
-          const res = await fetch(
-            `/api/sessions/${encodeURIComponent(sessionId)}`,
-            { method: 'DELETE' }
-          );
-          if (!res.ok) {
-            setSyncError('Không thể xóa phiên học trên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi xóa phiên học.');
-        }
+        await syncMutation(
+          `/api/sessions/${encodeURIComponent(sessionId)}`,
+          'DELETE',
+          undefined,
+          'Không thể xóa phiên học trên Neon.'
+        );
       }
     },
-    [user]
+    [user, syncMutation]
   );
 
   const updateDailyGoal = useCallback(
@@ -957,23 +1158,16 @@ export function useFlashcardStore() {
       setDailyGoal(clamped);
 
       if (user) {
-        try {
-          const res = await fetch('/api/profile', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dailyGoal: clamped }),
-          });
-          if (!res.ok) {
-            setSyncError('Không thể lưu mục tiêu lên Neon.');
-          } else {
-            setUser((prev) => (prev ? { ...prev, dailyGoal: clamped } : null));
-          }
-        } catch {
-          setSyncError('Mất kết nối khi lưu mục tiêu.');
-        }
+        setUser((prev) => (prev ? { ...prev, dailyGoal: clamped } : null));
+        await syncMutation(
+          '/api/profile',
+          'PATCH',
+          { dailyGoal: clamped },
+          'Không thể lưu mục tiêu lên Neon.'
+        );
       }
     },
-    [user]
+    [user, syncMutation]
   );
 
   const updateProfile = useCallback(
@@ -1041,24 +1235,15 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        setSyncing(true);
-        setSyncError(null);
-        try {
-          const res = await fetch(
-            `/api/decks/${encodeURIComponent(deckId)}/reset`,
-            { method: 'POST' }
-          );
-          if (!res.ok) {
-            setSyncError('Không thể đặt lại tiến độ trên Neon.');
-          }
-        } catch {
-          setSyncError('Mất kết nối khi đặt lại tiến độ.');
-        } finally {
-          setSyncing(false);
-        }
+        await syncMutation(
+          `/api/decks/${encodeURIComponent(deckId)}/reset`,
+          'POST',
+          undefined,
+          'Không thể đặt lại tiến độ trên Neon.'
+        );
       }
     },
-    [user]
+    [user, syncMutation]
   );
 
   const importBackupDecks = useCallback(
@@ -1097,6 +1282,257 @@ export function useFlashcardStore() {
     [createDeck, bulkAddCards]
   );
 
+  // Persist community & leaderboard cache
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem(LS_COMMUNITY, JSON.stringify(communityDecks));
+      localStorage.setItem(LS_LEADERBOARD, JSON.stringify(leaderboardEntries.slice(0, 80)));
+    } catch {
+      // Ignore quota
+    }
+  }, [hydrated, communityDecks, leaderboardEntries]);
+
+  const refreshCommunityDecks = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    try {
+      const res = await fetch('/api/community', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.decks)) {
+        setCommunityDecks((prev) => {
+          const localCustom = prev.filter(
+            (p) =>
+              p.authorId === 'local' &&
+              !data.decks.some((d: CommunityDeck) => d.id === p.id)
+          );
+          return [...localCustom, ...data.decks];
+        });
+      }
+    } catch {
+      // Offline
+    }
+  }, []);
+
+  const publishDeckToCommunity = useCallback(
+    async (input: {
+      sourceDeckId?: string | null;
+      title: string;
+      description: string;
+      category: string;
+      cards: CommunityCardItem[];
+    }): Promise<{ ok: boolean; error?: string; deck?: CommunityDeck }> => {
+      const title = clampString(input.title, LIMITS.TITLE_MAX);
+      const description = clampString(input.description, LIMITS.DESC_MAX);
+      const category =
+        clampString(input.category || 'Chung', LIMITS.CATEGORY_MAX) || 'Chung';
+      const cleanCards = input.cards.filter(
+        (c) => c.term.trim().length > 0 && c.meaning.trim().length > 0
+      );
+      if (!title || cleanCards.length === 0) {
+        return {
+          ok: false,
+          error: 'Bộ thẻ cần có tiêu đề và ít nhất 1 thẻ từ vựng.',
+        };
+      }
+
+      if (user && neonConfigured && (typeof navigator === 'undefined' || navigator.onLine)) {
+        try {
+          const res = await fetch('/api/community', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sourceDeckId: input.sourceDeckId ?? null,
+              title,
+              description,
+              category,
+              cards: cleanCards,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            return { ok: false, error: data.error || 'Không thể đăng tải bộ thẻ.' };
+          }
+          if (data.deck) {
+            setCommunityDecks((prev) => {
+              const filtered = prev.filter((d) => d.id !== data.deck.id);
+              return [data.deck, ...filtered];
+            });
+          }
+          return { ok: true, deck: data.deck };
+        } catch {
+          // Fallback to local publish below if network drops
+        }
+      }
+
+      const now = Date.now();
+      const localDeck: CommunityDeck = {
+        id: createUniqueId('comm'),
+        sourceDeckId: input.sourceDeckId ?? null,
+        authorId: user?.id || 'local',
+        authorName: user?.displayName || user?.username || 'Bạn (Trên máy)',
+        title,
+        description,
+        category,
+        cardCount: cleanCards.length,
+        downloadsCount: 0,
+        cards: cleanCards,
+        publishedAt: now,
+      };
+      setCommunityDecks((prev) => [localDeck, ...prev]);
+      return { ok: true, deck: localDeck };
+    },
+    [user, neonConfigured]
+  );
+
+  const unpublishCommunityDeck = useCallback(
+    async (communityDeckId: string) => {
+      setCommunityDecks((prev) => prev.filter((d) => d.id !== communityDeckId));
+      if (user && neonConfigured) {
+        await syncMutation(
+          `/api/community/${encodeURIComponent(communityDeckId)}`,
+          'DELETE',
+          undefined,
+          'Không thể gỡ bộ thẻ khỏi Kho thẻ.'
+        );
+      }
+    },
+    [user, neonConfigured, syncMutation]
+  );
+
+  const importCommunityDeck = useCallback(
+    async (communityDeck: CommunityDeck): Promise<string> => {
+      const deckId = await createDeck({
+        title: communityDeck.title,
+        description: communityDeck.description,
+        category: communityDeck.category,
+      });
+      if (communityDeck.cards.length > 0) {
+        await bulkAddCards(deckId, communityDeck.cards);
+      }
+      setCommunityDecks((prev) =>
+        prev.map((d) =>
+          d.id === communityDeck.id
+            ? { ...d, downloadsCount: d.downloadsCount + 1 }
+            : d
+        )
+      );
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        fetch(`/api/community/${encodeURIComponent(communityDeck.id)}`, {
+          method: 'POST',
+        }).catch(() => {});
+      }
+      return deckId;
+    },
+    [createDeck, bulkAddCards]
+  );
+
+  const refreshLeaderboard = useCallback(
+    async (filters?: { deckId?: string; mode?: string }) => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      try {
+        const params = new URLSearchParams();
+        if (filters?.deckId && filters.deckId !== 'all') {
+          params.set('deckId', filters.deckId);
+        }
+        if (filters?.mode && filters.mode !== 'all') {
+          params.set('mode', filters.mode);
+        }
+        params.set('limit', '40');
+        const res = await fetch(`/api/leaderboard?${params.toString()}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.entries)) {
+          setLeaderboardEntries((prev) => {
+            const serverIds = new Set(
+              data.entries.map((e: LeaderboardEntry) => e.id)
+            );
+            const localOnly = prev.filter((e) => !serverIds.has(e.id));
+            return [...data.entries, ...localOnly].sort(
+              (a, b) =>
+                b.score - a.score ||
+                b.accuracy - a.accuracy ||
+                a.durationSeconds - b.durationSeconds
+            );
+          });
+        }
+        if (Array.isArray(data.streakLeaders)) {
+          setStreakLeaders(data.streakLeaders);
+        }
+      } catch {
+        // Offline
+      }
+    },
+    []
+  );
+
+  const submitLeaderboardScore = useCallback(
+    async (input: {
+      deckId: string;
+      deckTitle: string;
+      mode: LeaderboardMode;
+      score: number;
+      accuracy: number;
+      durationSeconds: number;
+      streak?: number;
+      playerName?: string;
+    }) => {
+      const id = createUniqueId('lb');
+      const playerName =
+        user?.displayName ||
+        user?.username ||
+        input.playerName?.trim() ||
+        'Bạn (Khách)';
+
+      const entry: LeaderboardEntry = {
+        id,
+        userId: user?.id ?? null,
+        playerName,
+        deckId: input.deckId,
+        deckTitle: input.deckTitle,
+        mode: input.mode,
+        score: Math.max(0, Math.round(input.score)),
+        accuracy: Math.max(0, Math.min(100, Math.round(input.accuracy))),
+        durationSeconds: Math.max(1, Math.round(input.durationSeconds)),
+        streak: Math.max(0, Math.round(input.streak || 0)),
+        createdAt: Date.now(),
+      };
+
+      setLeaderboardEntries((prev) =>
+        [entry, ...prev]
+          .sort(
+            (a, b) =>
+              b.score - a.score ||
+              b.accuracy - a.accuracy ||
+              a.durationSeconds - b.durationSeconds
+          )
+          .slice(0, 100)
+      );
+
+      if (neonConfigured) {
+        await syncMutation(
+          '/api/leaderboard',
+          'POST',
+          {
+            id: entry.id,
+            playerName: entry.playerName,
+            deckId: entry.deckId,
+            deckTitle: entry.deckTitle,
+            mode: entry.mode,
+            score: entry.score,
+            accuracy: entry.accuracy,
+            durationSeconds: entry.durationSeconds,
+            streak: entry.streak,
+          },
+          'Không thể lưu điểm lên Bảng xếp hạng.'
+        );
+      }
+    },
+    [user, neonConfigured, syncMutation]
+  );
+
   return {
     theme,
     toggleTheme,
@@ -1105,6 +1541,7 @@ export function useFlashcardStore() {
     neonConfigured,
     syncing,
     syncError,
+    pendingSyncCount,
     loginWithPassword,
     registerWithPassword,
     signOutUser,
@@ -1114,6 +1551,9 @@ export function useFlashcardStore() {
     cardsByDeck,
     sessions,
     dailyGoal,
+    communityDecks,
+    leaderboardEntries,
+    streakLeaders,
     hydrated,
     createDeck,
     updateDeck,
@@ -1129,5 +1569,11 @@ export function useFlashcardStore() {
     recordPracticeResults,
     deleteStudySession,
     updateDailyGoal,
+    refreshCommunityDecks,
+    publishDeckToCommunity,
+    unpublishCommunityDeck,
+    importCommunityDeck,
+    refreshLeaderboard,
+    submitLeaderboardScore,
   };
 }

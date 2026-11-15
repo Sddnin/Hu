@@ -12,6 +12,7 @@ import {
   Sun,
 } from 'lucide-react';
 import { AccountTab } from '@/components/AccountModal';
+import { PWAInstallButton } from '@/components/PWAControls';
 import { AuthUser } from '@/lib/types';
 
 interface WorkspaceToolbarProps {
@@ -163,6 +164,8 @@ export function WorkspaceToolbar({
               <span className="hidden sm:inline">Tối</span>
             </button>
           </div>
+
+          <PWAInstallButton />
 
           {authReady && (
             <>

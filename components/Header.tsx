@@ -10,8 +10,9 @@ interface HeaderProps {
 
 const NAV_ITEMS: Array<{ id: AppView; label: string }> = [
   { id: 'decks', label: 'Bộ thẻ' },
+  { id: 'community', label: 'Kho thẻ' },
   { id: 'practice', label: 'Luyện tập' },
-  { id: 'progress', label: 'Tiến độ & Lịch sử' },
+  { id: 'leaderboard', label: 'BXH & Chuỗi' },
 ];
 
 export function Header({

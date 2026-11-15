@@ -41,6 +41,8 @@ export async function POST(req: NextRequest) {
       'fill',
       'match',
       'spell',
+      'blast',
+      'meteor',
       'test',
     ]);
     const mode: PracticeMode = validModes.has(body.mode) ? body.mode : 'flip';

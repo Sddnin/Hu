@@ -125,6 +125,54 @@ export async function ensureNeonSchema(): Promise<void> {
       await sql`
         CREATE INDEX IF NOT EXISTS study_sessions_user_id_idx ON study_sessions (user_id)
       `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS community_decks (
+          id TEXT PRIMARY KEY,
+          source_deck_id TEXT,
+          author_user_id TEXT NOT NULL,
+          author_name TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL DEFAULT '',
+          category TEXT NOT NULL DEFAULT 'Chung',
+          cards_json TEXT NOT NULL,
+          card_count INTEGER NOT NULL DEFAULT 0,
+          downloads_count INTEGER NOT NULL DEFAULT 0,
+          published_at BIGINT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE INDEX IF NOT EXISTS community_decks_author_idx ON community_decks (author_user_id)
+      `;
+
+      await sql`
+        CREATE INDEX IF NOT EXISTS community_decks_published_idx ON community_decks (published_at)
+      `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS leaderboard_entries (
+          id TEXT PRIMARY KEY,
+          user_id TEXT,
+          player_name TEXT NOT NULL,
+          deck_id TEXT NOT NULL,
+          deck_title TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          score INTEGER NOT NULL,
+          accuracy INTEGER NOT NULL,
+          duration_seconds INTEGER NOT NULL,
+          streak INTEGER NOT NULL DEFAULT 0,
+          created_at BIGINT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE INDEX IF NOT EXISTS leaderboard_deck_mode_idx ON leaderboard_entries (deck_id, mode, score DESC)
+      `;
+
+      await sql`
+        CREATE INDEX IF NOT EXISTS leaderboard_mode_score_idx ON leaderboard_entries (mode, score DESC)
+      `;
     })().catch((err) => {
       globalThis._neonSchemaPromise = undefined;
       throw err;

@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Bricolage_Grotesque, Plus_Jakarta_Sans, IBM_Plex_Mono } from 'next/font/google';
 import './globals.css';
 
@@ -23,10 +23,30 @@ const ibmMono = IBM_Plex_Mono({
   display: 'swap',
 });
 
+export const viewport: Viewport = {
+  themeColor: '#0284c7',
+  width: 'device-width',
+  initialScale: 1,
+};
+
 export const metadata: Metadata = {
   title: 'LexiCard — Flashcard & Luyện tập Từ vựng',
   description:
     'Website học từ vựng Flashcard với giao diện sáng/tối, luyện tập đa dạng (lật thẻ, trắc nghiệm, điền từ, nối thẻ) và lưu lịch sử theo dõi tiến độ.',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'LexiCard',
+  },
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: '/apple-touch-icon.png',
+  },
   openGraph: {
     title: 'LexiCard — Flashcard & Luyện tập Từ vựng',
     description:

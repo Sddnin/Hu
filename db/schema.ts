@@ -82,3 +82,45 @@ export const studySessions = pgTable(
   },
   (table) => [index('study_sessions_user_id_idx').on(table.userId)]
 );
+
+export const communityDecks = pgTable(
+  'community_decks',
+  {
+    id: text('id').primaryKey(),
+    sourceDeckId: text('source_deck_id'),
+    authorUserId: text('author_user_id').notNull(),
+    authorName: text('author_name').notNull(),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    category: text('category').notNull().default('Chung'),
+    cardsJson: text('cards_json').notNull(),
+    cardCount: integer('card_count').notNull().default(0),
+    downloadsCount: integer('downloads_count').notNull().default(0),
+    publishedAt: bigint('published_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('community_decks_author_idx').on(table.authorUserId),
+    index('community_decks_published_idx').on(table.publishedAt),
+  ]
+);
+
+export const leaderboardEntries = pgTable(
+  'leaderboard_entries',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id'),
+    playerName: text('player_name').notNull(),
+    deckId: text('deck_id').notNull(),
+    deckTitle: text('deck_title').notNull(),
+    mode: text('mode').notNull(),
+    score: integer('score').notNull(),
+    accuracy: integer('accuracy').notNull(),
+    durationSeconds: integer('duration_seconds').notNull(),
+    streak: integer('streak').notNull().default(0),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('leaderboard_deck_mode_idx').on(table.deckId, table.mode, table.score),
+    index('leaderboard_mode_score_idx').on(table.mode, table.score),
+  ]
+);
