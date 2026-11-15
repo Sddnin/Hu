@@ -53,47 +53,39 @@ type GameScreenMode = 'menu' | 'count' | 'play' | 'pause' | 'over';
 
 interface DiffConfig {
   label: string;
-  time: number;
-  gates: number;
+  speedDesc: string;
   speed: number;
   gap: number;
-  bonus: number;
-  penalty: number;
-  curve: number;
 }
 
 const DIFF: Record<DiffKey, DiffConfig> = {
   easy: {
     label: 'Tân binh',
-    time: 45,
-    gates: 8,
-    speed: 26,
-    gap: 120,
-    bonus: 7,
-    penalty: 4,
-    curve: 0.85,
+    speedDesc: 'Tốc độ vừa · Dễ ngắm',
+    speed: 24,
+    gap: 112,
   },
   normal: {
     label: 'Chiến sĩ',
-    time: 40,
-    gates: 10,
-    speed: 32,
-    gap: 106,
-    bonus: 6,
-    penalty: 5,
-    curve: 1.0,
+    speedDesc: 'Tốc độ chuẩn · Vòng lặp',
+    speed: 31,
+    gap: 102,
   },
   hard: {
     label: 'Đặc công',
-    time: 32,
-    gates: 12,
+    speedDesc: 'Tốc độ cao · Phản xạ nhanh',
     speed: 39,
-    gap: 96,
-    bonus: 5,
-    penalty: 6,
-    curve: 1.22,
+    gap: 92,
   },
 };
+
+function safeSpeak(text: string) {
+  try {
+    speakEnglish(text);
+  } catch {
+    // Bỏ qua lỗi Web Speech API để không ảnh hưởng vòng lặp game
+  }
+}
 
 interface ResolvedGateWord {
   card: Flashcard;
@@ -217,11 +209,9 @@ export function TankGateGame({
 
   const [hudScore, setHudScore] = useState(0);
   const [hudCorrect, setHudCorrect] = useState(0);
-  const [hudTotal, setHudTotal] = useState(DIFF.normal.gates);
+  const [hudPassed, setHudPassed] = useState(0);
+  const [hudCycle, setHudCycle] = useState(1);
   const [hudCombo, setHudCombo] = useState(0);
-  const [pipStates, setPipStates] = useState<Array<'pending' | 'on' | 'miss'>>(
-    []
-  );
   const [activeQ, setActiveQ] = useState<ActiveQuestionHud | null>(null);
   const [countdownLabel, setCountdownLabel] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -232,6 +222,7 @@ export function TankGateGame({
   const [showGateHint, setShowGateHint] = useState(false);
   const [steerLeftActive, setSteerLeftActive] = useState(false);
   const [steerRightActive, setSteerRightActive] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [nitroReady, setNitroReady] = useState(false);
   const [nitroActive, setNitroActive] = useState(false);
   const [driftActive, setDriftActive] = useState(false);
@@ -243,12 +234,11 @@ export function TankGateGame({
 
   const [resultStats, setResultStats] = useState<{
     finalScore: number;
-    timeBonus: number;
     correct: number;
     total: number;
+    accuracy: number;
+    cycles: number;
     maxCombo: number;
-    timeLeft: number;
-    reason: 'time' | 'clear';
     rank: 'S' | 'A' | 'B' | 'C';
     title: string;
     log: GateLogItem[];
@@ -258,11 +248,15 @@ export function TankGateGame({
 
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const timerTextRef = useRef<HTMLSpanElement | null>(null);
-  const timerRingRef = useRef<HTMLDivElement | null>(null);
   const nitroFillRef = useRef<HTMLDivElement | null>(null);
   const driftCdRef = useRef<HTMLDivElement | null>(null);
   const gateHintTextRef = useRef<HTMLSpanElement | null>(null);
+  const viewWidthRef = useRef<number>(640);
+  const dragRef = useRef<{
+    active: boolean;
+    pointerId: number | null;
+    lastX: number;
+  }>({ active: false, pointerId: null, lastX: 0 });
 
   const audioRef = useRef<TankAudioEngine | null>(null);
   const cardsRef = useRef(cards);
@@ -304,27 +298,27 @@ export function TankGateGame({
     z: number;
     x: number;
     vx: number;
+    dragVx: number;
     speed: number;
     targetSpeed: number;
-    time: number;
     score: number;
     correct: number;
     combo: number;
     maxCombo: number;
-    total: number;
+    cycle: number;
     nitro: number;
     nitroOn: number;
     driftOn: number;
     driftCd: number;
     stun: number;
     gateIdx: number;
+    wordCursor: number;
     nextGateZ: number;
     nextPickZ: number;
     words: Flashcard[];
     log: GateLogItem[];
     shake: number;
     tilt: number;
-    lastTick: number;
     countdown: number;
     cdStep: number;
     elapsed: number;
@@ -339,7 +333,7 @@ export function TankGateGame({
     activateNitro: () => void;
     activateDrift: () => void;
     relabelGates: () => void;
-    endGame: (reason: 'time' | 'clear') => void;
+    endGame: () => void;
   } | null>(null);
 
   const pushToast = useCallback(
@@ -850,15 +844,10 @@ export function TankGateGame({
     const SEG = 6;
     const CHUNK = 18;
     const NCHUNK = 26;
-    let curveAmp = 1;
 
-    const centerX = (z: number) =>
-      (Math.sin(z * 0.0075) * 11 + Math.sin(z * 0.0031 + 1.7) * 16) *
-      curveAmp;
-    const slopeX = (z: number) =>
-      (Math.cos(z * 0.0075) * 0.0075 * 11 +
-        Math.cos(z * 0.0031 + 1.7) * 0.0031 * 16) *
-      curveAmp;
+    // Đường thẳng hoàn toàn giúp người chơi dễ căn làn Trái / Phải
+    const centerX = (_z: number) => 0;
+    const slopeX = (_z: number) => 0;
 
     const ground = mk(G.plane, M.grass, 0, -0.06, 0, 900, 900, 1);
     ground.rotation.x = -Math.PI / 2;
@@ -1488,27 +1477,27 @@ export function TankGateGame({
       z: 0,
       x: 0,
       vx: 0,
+      dragVx: 0,
       speed: 14,
-      targetSpeed: 32,
-      time: 40,
+      targetSpeed: 31,
       score: 0,
       correct: 0,
       combo: 0,
       maxCombo: 0,
-      total: 10,
+      cycle: 1,
       nitro: 0.5,
       nitroOn: 0,
       driftOn: 0,
       driftCd: 0,
       stun: 0,
       gateIdx: 0,
+      wordCursor: 0,
       nextGateZ: 95,
       nextPickZ: 60,
       words: [] as Flashcard[],
       log: [] as GateLogItem[],
       shake: 0,
       tilt: 0,
-      lastTick: 99,
       countdown: 0,
       cdStep: 9,
       elapsed: 0,
@@ -1516,7 +1505,6 @@ export function TankGateGame({
       left: false,
       right: false,
       runSaved: false,
-      lastHudSec: -1,
       lastNitroReady: false,
       lastNitroActive: false,
       lastDriftActive: false,
@@ -1529,12 +1517,11 @@ export function TankGateGame({
       activateNitro: () => {},
       activateDrift: () => {},
       relabelGates: () => {},
-      endGame: (_reason: 'time' | 'clear') => {},
+      endGame: () => {},
     };
     simRef.current = S;
 
     const resetWorld = () => {
-      curveAmp = DIFF[diffRef.current].curve;
       resetTrack();
       gates.forEach(disarmGate);
       picks.forEach((p) => {
@@ -1553,32 +1540,27 @@ export function TankGateGame({
       pGeo.attributes.size.needsUpdate = true;
     };
 
-    const pickWords = (n: number): Flashcard[] => {
+    const buildDeckCycle = (): Flashcard[] => {
       const src = cardsRef.current;
       if (src.length === 0) return [];
-      const prioritized = src.slice(0, Math.min(n, src.length));
-      const out = shuffleInPlace(prioritized);
-      while (out.length < n) {
-        out.push(src[out.length % src.length]);
+      return shuffleInPlace([...src]);
+    };
+
+    const nextLoopCard = (): Flashcard | null => {
+      if (cardsRef.current.length === 0) return null;
+      if (S.wordCursor >= S.words.length) {
+        S.words = buildDeckCycle();
+        S.wordCursor = 0;
+        S.cycle += 1;
+        setHudCycle(S.cycle);
+        pushToast(`VÒNG ${S.cycle}`, 'gold', 'TIẾP TỤC LUYỆN TẬP');
       }
-      return out;
+      const card = S.words[S.wordCursor] ?? cardsRef.current[0];
+      S.wordCursor += 1;
+      return card;
     };
 
     const syncImperativeHud = () => {
-      const D = DIFF[diffRef.current];
-      const t = Math.max(0, S.time);
-      const secCeil = Math.ceil(t);
-      if (secCeil !== S.lastHudSec) {
-        S.lastHudSec = secCeil;
-        if (timerTextRef.current) {
-          timerTextRef.current.textContent = String(secCeil);
-        }
-      }
-      if (timerRingRef.current) {
-        const pct = clamp(t / D.time, 0, 1) * 100;
-        const ringColor = t <= 8 ? '#ff3b46' : '#c6ff3d';
-        timerRingRef.current.style.background = `conic-gradient(${ringColor} ${pct.toFixed(1)}%, rgba(255,255,255,0.14) ${pct.toFixed(1)}%)`;
-      }
       if (nitroFillRef.current) {
         nitroFillRef.current.style.width = `${(S.nitro * 100).toFixed(0)}%`;
       }
@@ -1614,29 +1596,29 @@ export function TankGateGame({
       S.mode = 'count';
       S.prevMode = 'count';
       S.z = 0;
-      S.x = centerX(0);
+      S.x = 0;
       S.vx = 0;
+      S.dragVx = 0;
       S.speed = 0;
       S.targetSpeed = D.speed;
-      S.time = D.time;
       S.score = 0;
       S.correct = 0;
       S.combo = 0;
       S.maxCombo = 0;
-      S.total = D.gates;
+      S.cycle = 1;
       S.nitro = 0.5;
       S.nitroOn = 0;
       S.driftOn = 0;
       S.driftCd = 0;
       S.stun = 0;
       S.gateIdx = 0;
+      S.wordCursor = 0;
       S.nextGateZ = 95;
       S.nextPickZ = 60;
-      S.words = pickWords(D.gates);
+      S.words = buildDeckCycle();
       S.log = [];
       S.shake = 0;
       S.tilt = 0;
-      S.lastTick = 99;
       S.cdStep = 9;
       S.countdown = 3.2;
       S.elapsed = 0;
@@ -1644,23 +1626,24 @@ export function TankGateGame({
       S.left = false;
       S.right = false;
       S.runSaved = false;
-      S.lastHudSec = -1;
       S.lastGateHintShown = false;
       leftPointersRef.current.clear();
       rightPointersRef.current.clear();
+      dragRef.current = { active: false, pointerId: null, lastX: 0 };
 
       resetWorld();
       setScreenMode('count');
       setHudScore(0);
       setHudCorrect(0);
-      setHudTotal(D.gates);
+      setHudPassed(0);
+      setHudCycle(1);
       setHudCombo(0);
-      setPipStates(Array.from({ length: D.gates }, () => 'pending'));
       setActiveQ(null);
       setBanner(null);
       setShowGateHint(false);
       setSteerLeftActive(false);
       setSteerRightActive(false);
+      setIsDragging(false);
       setResultStats(null);
       setOnlyMissFilter(false);
       setCountdownLabel('3');
@@ -1674,10 +1657,12 @@ export function TankGateGame({
 
     const goMenu = () => {
       S.mode = 'menu';
+      dragRef.current = { active: false, pointerId: null, lastX: 0 };
+      setIsDragging(false);
       audio.engineUpdate(0, false, false);
       resetWorld();
       S.z = 0;
-      S.x = centerX(0);
+      S.x = 0;
       S.speed = 14;
       setScreenMode('menu');
       setCountdownLabel(null);
@@ -1690,6 +1675,8 @@ export function TankGateGame({
       if (S.mode !== 'play' && S.mode !== 'count') return;
       S.prevMode = S.mode;
       S.mode = 'pause';
+      dragRef.current = { active: false, pointerId: null, lastX: 0 };
+      setIsDragging(false);
       setScreenMode('pause');
       audio.engineUpdate(0, false, false);
       audio.ui();
@@ -1703,24 +1690,31 @@ export function TankGateGame({
       audio.ui();
     };
 
-    const endGame = (reason: 'time' | 'clear') => {
+    const endGame = () => {
       if (S.mode === 'over') return;
       S.mode = 'over';
-      const timeBonus = Math.round(Math.max(0, S.time) * 12);
-      const finalScore = S.score + timeBonus;
-      const acc = S.total > 0 ? S.correct / S.total : 0;
+      dragRef.current = { active: false, pointerId: null, lastX: 0 };
+      setIsDragging(false);
+      const snapshotLog = [...S.log];
+      const totalAnswered = snapshotLog.length;
+      const finalScore = S.score;
+      const acc = totalAnswered > 0 ? S.correct / totalAnswered : 0;
+      const accuracy = Math.round(acc * 100);
 
       let rank: 'S' | 'A' | 'B' | 'C' = 'C';
       let title = 'CẦN LUYỆN THÊM';
-      if (acc >= 1) {
+      if (totalAnswered > 0 && acc >= 0.95) {
         rank = 'S';
         title = 'XUẤT SẮC!';
-      } else if (acc >= 0.8) {
+      } else if (totalAnswered > 0 && acc >= 0.8) {
         rank = 'A';
         title = 'GIỎI LẮM!';
-      } else if (acc >= 0.55) {
+      } else if (totalAnswered > 0 && acc >= 0.55) {
         rank = 'B';
         title = 'KHÁ TỐT!';
+      } else if (totalAnswered === 0) {
+        rank = 'C';
+        title = 'KẾT THÚC SỚM';
       }
 
       setLocalBest((b) => Math.max(b, finalScore));
@@ -1731,18 +1725,16 @@ export function TankGateGame({
       setShowGateHint(false);
       setScreenMode('over');
       audio.engineUpdate(0, false, false);
-      if (acc >= 0.8) audio.win();
+      if (acc >= 0.8 && totalAnswered > 0) audio.win();
       else audio.lose();
 
-      const snapshotLog = [...S.log];
       setResultStats({
         finalScore,
-        timeBonus,
         correct: S.correct,
-        total: S.total,
+        total: totalAnswered,
+        accuracy,
+        cycles: S.cycle,
         maxCombo: S.maxCombo,
-        timeLeft: Math.max(0, Math.round(S.time)),
-        reason,
         rank,
         title,
         log: snapshotLog,
@@ -1805,12 +1797,12 @@ export function TankGateGame({
     const resolveGate = (gt: GateSlot) => {
       if (!gt.item || !gt.opts) return;
       gt.answered = true;
-      const D = DIFF[diffRef.current];
-      const side: -1 | 1 = S.x < centerX(gt.z) ? -1 : 1;
+      // Camera nhìn theo +Z nên phía trái màn hình là +X (side = -1), phía phải màn hình là -X (side = +1)
+      const side: -1 | 1 = S.x > centerX(gt.z) ? -1 : 1;
       const ok = side === gt.correctSide;
       const chose = side < 0 ? gt.opts.left : gt.opts.right;
       const hit = gt.halves[side < 0 ? 0 : 1];
-      const hx = centerX(gt.z) + side * (HALF * 0.52);
+      const hx = centerX(gt.z) - side * (HALF * 0.52);
 
       const entry: GateLogItem = {
         cardId: gt.item.card.id,
@@ -1825,15 +1817,6 @@ export function TankGateGame({
       };
       S.log.push(entry);
 
-      const logIdx = S.log.length - 1;
-      setPipStates((prev) => {
-        const next = [...prev];
-        if (logIdx >= 0 && logIdx < next.length) {
-          next[logIdx] = ok ? 'on' : 'miss';
-        }
-        return next;
-      });
-
       hit.bars.visible = false;
       hit.fall = 1;
       throwDebris(hx, 2.2, gt.z, ok ? 10 : 16, HALF * 0.4);
@@ -1846,7 +1829,6 @@ export function TankGateGame({
         const nitroBonus = S.nitroOn > 0 ? 60 : 0;
         const gain = Math.round(100 * mult) + nitroBonus;
         S.score += gain;
-        S.time = Math.min(D.time + 12, S.time + D.bonus);
         S.nitro = clamp(S.nitro + 0.22, 0, 1);
 
         burst(hx, 3, gt.z, 26, 0x3ddc84, 10, 1.1);
@@ -1855,9 +1837,9 @@ export function TankGateGame({
         audio.correct(S.combo);
         S.shake = Math.max(S.shake, 0.28);
         pushToast(
-          `+${D.bonus}s`,
+          `+${gain} ĐIỂM`,
           'good',
-          `+${gain} ĐIỂM${nitroBonus ? ' · NITRO BONUS' : ''}`
+          nitroBonus ? 'NITRO BONUS · CHUẨN!' : `COMBO ×${S.combo}`
         );
         showBanner(gt.item.question, `${gt.item.answer} ✓`, true);
         setActiveQ((prev) => (prev ? { ...prev, feedback: 'correct' } : null));
@@ -1865,16 +1847,15 @@ export function TankGateGame({
         glowLight.intensity = 2.4;
       } else {
         S.combo = 0;
-        S.time -= D.penalty;
-        S.stun = 0.55;
-        S.speed *= 0.42;
+        S.stun = 0.45;
+        S.speed *= 0.48;
 
         burst(hx, 3, gt.z, 30, 0xff3b46, 12, 1.2);
         triggerFlash('bad');
         audio.wrong();
         audio.crash();
-        S.shake = Math.max(S.shake, 0.75);
-        pushToast(`−${D.penalty}s`, 'bad', 'SAI RỒI');
+        S.shake = Math.max(S.shake, 0.7);
+        pushToast('CHƯA ĐÚNG', 'bad', 'MẤT COMBO · TIẾP TỤC!');
         showBanner(gt.item.question, `Đáp án đúng: ${gt.item.answer}`, false);
         setActiveQ((prev) => (prev ? { ...prev, feedback: 'wrong' } : null));
         glowLight.color.setHex(0xff3b46);
@@ -1882,27 +1863,25 @@ export function TankGateGame({
       }
 
       setHudCorrect(S.correct);
+      setHudPassed(S.log.length);
       setHudScore(S.score);
       setHudCombo(S.combo);
       glowLight.position.set(hx, 4, gt.z);
       syncImperativeHud();
-
-      if (S.time <= 0) {
-        S.time = 0;
-        endGame('time');
-      }
     };
 
     resetWorld();
     S.z = 0;
-    S.x = centerX(0);
+    S.x = 0;
     S.speed = 14;
 
     let viewW = Math.max(300, container.clientWidth);
     let viewH = Math.max(240, container.clientHeight);
+    viewWidthRef.current = viewW;
     const applyResize = () => {
       viewW = Math.max(300, container.clientWidth);
       viewH = Math.max(240, container.clientHeight);
+      viewWidthRef.current = viewW;
       renderer.setSize(viewW, viewH, false);
       camera.aspect = viewW / Math.max(viewH, 1);
       camera.updateProjectionMatrix();
@@ -1964,10 +1943,13 @@ export function TankGateGame({
     const onBlurOrHidden = () => {
       S.left = false;
       S.right = false;
+      S.dragVx = 0;
+      dragRef.current = { active: false, pointerId: null, lastX: 0 };
       leftPointersRef.current.clear();
       rightPointersRef.current.clear();
       setSteerLeftActive(false);
       setSteerRightActive(false);
+      setIsDragging(false);
       if (S.mode === 'play' || S.mode === 'count') {
         pauseGame();
       }
@@ -2020,15 +2002,6 @@ export function TankGateGame({
 
       if (playing) {
         S.elapsed += dt;
-        S.time -= dt;
-        if (S.time <= 8 && Math.ceil(S.time) !== S.lastTick) {
-          S.lastTick = Math.ceil(S.time);
-          if (S.lastTick > 0) audio.tick();
-        }
-        if (S.time <= 0) {
-          S.time = 0;
-          endGame('time');
-        }
         if (S.stun > 0) S.stun -= dt;
         if (S.nitroOn > 0) S.nitroOn -= dt;
         if (S.driftOn > 0) S.driftOn -= dt;
@@ -2037,12 +2010,15 @@ export function TankGateGame({
         const boost = S.nitroOn > 0 ? 1.72 : 1;
         const stunK = S.stun > 0 ? 0.35 : 1;
         S.targetSpeed =
-          D.speed * boost * stunK * (1 + Math.min(S.elapsed / 70, 0.22));
+          D.speed * boost * stunK * (1 + Math.min(S.elapsed / 120, 0.16));
         S.speed = lerp(S.speed, S.targetSpeed, 1 - Math.pow(0.001, dt));
 
-        const steer = (S.right ? 1 : 0) - (S.left ? 1 : 0);
+        // Camera hướng +Z nên +X là Trái màn hình, -X là Phải màn hình
+        const steer = (S.left ? 1 : 0) - (S.right ? 1 : 0);
         const grip = S.driftOn > 0 ? 1.85 : 1;
-        S.vx = lerp(S.vx, steer * 13 * grip, 1 - Math.pow(0.0006, dt));
+        const targetVx = steer * 13.5 * grip + S.dragVx;
+        S.vx = lerp(S.vx, targetVx, 1 - Math.pow(0.0006, dt));
+        S.dragVx *= Math.pow(0.02, dt);
         S.x += S.vx * dt;
 
         const cx = centerX(S.z);
@@ -2135,14 +2111,11 @@ export function TankGateGame({
           );
         }
 
-        if (
-          S.gateIdx < S.total &&
-          S.z > S.nextGateZ - 260 &&
-          S.words[S.gateIdx]
-        ) {
+        if (S.z > S.nextGateZ - 260) {
           const slot = gates.find((gt) => !gt.active);
-          if (slot) {
-            armGate(slot, S.nextGateZ, S.words[S.gateIdx]);
+          const card = slot ? nextLoopCard() : null;
+          if (slot && card) {
+            armGate(slot, S.nextGateZ, card);
             S.gateIdx++;
             S.nextGateZ += D.gap;
           }
@@ -2183,12 +2156,12 @@ export function TankGateGame({
               feedback: 'none',
             });
             if (autoSpeakRef.current) {
-              speakEnglish(nearest.item.card.term);
+              safeSpeak(nearest.item.card.term);
             }
           }
           const dist = Math.round(nearest.z - S.z);
           if (gateHintTextRef.current) {
-            gateHintTextRef.current.textContent = `CỔNG ${S.log.length + 1}/${S.total} · ${dist}m`;
+            gateHintTextRef.current.textContent = `CỔNG ${S.log.length + 1} · VÒNG ${S.cycle} · ${dist}m`;
           }
           const hintVisible = dist < 80;
           if (hintVisible !== S.lastGateHintShown) {
@@ -2199,10 +2172,6 @@ export function TankGateGame({
           if (S.lastGateHintShown) {
             S.lastGateHintShown = false;
             setShowGateHint(false);
-          }
-          if (S.log.length >= S.total && S.shownQId !== null) {
-            S.shownQId = null;
-            setActiveQ(null);
           }
         }
 
@@ -2217,11 +2186,10 @@ export function TankGateGame({
             p.halo.visible = false;
             S.nitro = clamp(S.nitro + 0.28, 0, 1);
             S.score += 25;
-            S.time = Math.min(D.time + 12, S.time + 1);
             setHudScore(S.score);
             burst(p.x, 1.8, p.z, 16, 0x39e0ff, 7, 0.9);
             audio.pickup();
-            pushToast('+NITRO', 'cyan', '+1s · +25 điểm');
+            pushToast('+NITRO', 'cyan', '+25 điểm');
           }
           if (S.z > p.z + 20) {
             p.active = false;
@@ -2230,10 +2198,6 @@ export function TankGateGame({
           }
         }
 
-        if (S.mode === 'play' && S.log.length >= S.total) {
-          const pending = gates.some((gt) => gt.active && !gt.answered);
-          if (!pending) endGame('clear');
-        }
         syncImperativeHud();
       } else if (S.mode === 'menu' || S.mode === 'over') {
         S.speed = lerp(S.speed, 16, 1 - Math.pow(0.02, dt));
@@ -2480,6 +2444,43 @@ export function TankGateGame({
     }
   };
 
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const S = simRef.current;
+    if (!S || S.mode !== 'play') return;
+    // Trên PC: kéo chuột trái/phải trực tiếp trên đường đua để lái xe tăng
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    e.preventDefault();
+    dragRef.current = {
+      active: true,
+      pointerId: e.pointerId,
+      lastX: e.clientX,
+    };
+    setIsDragging(true);
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const S = simRef.current;
+    const d = dragRef.current;
+    if (!d.active || d.pointerId !== e.pointerId || !S || S.mode !== 'play') {
+      return;
+    }
+    const dx = e.clientX - d.lastX;
+    d.lastX = e.clientX;
+    const w = Math.max(viewWidthRef.current, 320);
+    // Kéo sang phải (dx > 0) giảm X (sang phải màn hình); kéo sang trái (dx < 0) tăng X (sang trái màn hình)
+    const worldShift = -(dx / w) * 21;
+    S.x = clamp(S.x + worldShift, -8.6, 8.6);
+    S.dragVx = clamp(worldShift * 28, -22, 22);
+  };
+
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (dragRef.current.pointerId === e.pointerId) {
+      dragRef.current = { active: false, pointerId: null, lastX: 0 };
+      setIsDragging(false);
+    }
+  };
+
   const filteredReviewLog = useMemo(() => {
     if (!resultStats) return [];
     return onlyMissFilter
@@ -2513,7 +2514,17 @@ export function TankGateGame({
     >
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 block h-full w-full"
+        onPointerDown={handleCanvasPointerDown}
+        onPointerMove={handleCanvasPointerMove}
+        onPointerUp={handleCanvasPointerUp}
+        onPointerCancel={handleCanvasPointerUp}
+        className={`absolute inset-0 block h-full w-full touch-none ${
+          screenMode === 'play'
+            ? isDragging
+              ? 'cursor-grabbing'
+              : 'md:cursor-grab'
+            : ''
+        }`}
       />
 
       <div
@@ -2562,23 +2573,12 @@ export function TankGateGame({
                 <span className="font-mono-tabular text-base font-extrabold leading-none text-white sm:text-lg">
                   {hudCorrect}
                   <span className="text-xs font-semibold text-[#9fb0bf]">
-                    /{hudTotal}
+                    /{hudPassed}
                   </span>
                 </span>
-                <div className="hidden items-center gap-0.5 md:flex">
-                  {pipStates.map((st, idx) => (
-                    <span
-                      key={idx}
-                      className={`block h-3 w-1.5 rounded-sm transition-colors ${
-                        st === 'on'
-                          ? 'bg-[#c6ff3d]'
-                          : st === 'miss'
-                            ? 'bg-[#ff3b46]'
-                            : 'bg-white/15'
-                      }`}
-                    />
-                  ))}
-                </div>
+                <span className="hidden rounded-md bg-[#8fc44a]/20 px-1.5 py-0.5 text-[10px] font-extrabold text-[#c6ff3d] md:inline">
+                  VÒNG {hudCycle}
+                </span>
               </div>
 
               <div className="flex flex-col rounded-xl border border-[#ffc21f]/40 bg-[#0c1522]/95 px-2.5 py-1 shadow-lg">
@@ -2637,10 +2637,10 @@ export function TankGateGame({
                       onPointerDown={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        speakEnglish(activeQ.term);
+                        safeSpeak(activeQ.term);
                       }}
                       onClick={(e) => {
-                        if (e.detail === 0) speakEnglish(activeQ.term);
+                        if (e.detail === 0) safeSpeak(activeQ.term);
                       }}
                       className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-[#39e0ff] hover:bg-white/20 cursor-pointer"
                     >
@@ -2707,7 +2707,7 @@ export function TankGateGame({
                 onClick={(e) => {
                   if (e.detail === 0) setExpanded((v) => !v);
                 }}
-                className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/15 bg-[#0c1522]/95 text-[#f4efe2] hover:border-[#39e0ff] cursor-pointer"
+                className="hidden h-10 w-10 items-center justify-center rounded-xl border border-white/15 bg-[#0c1522]/95 text-[#f4efe2] hover:border-[#39e0ff] sm:flex cursor-pointer"
               >
                 {expanded ? (
                   <Minimize2 className="h-4 w-4" aria-hidden="true" />
@@ -2716,27 +2716,22 @@ export function TankGateGame({
                 )}
               </button>
 
-              <div className="relative flex h-12 w-12 shrink-0 items-center justify-center sm:h-14 sm:w-14">
-                <div
-                  ref={timerRingRef}
-                  className="absolute inset-0 rounded-full p-[4px]"
-                  style={{
-                    background:
-                      'conic-gradient(#c6ff3d 100%, rgba(255,255,255,0.14) 100%)',
-                  }}
-                >
-                  <div className="h-full w-full rounded-full bg-[#060b12]" />
-                </div>
-                <div className="relative z-10 flex flex-col items-center leading-none">
-                  <span
-                    ref={timerTextRef}
-                    className="font-mono-tabular text-base font-extrabold text-white sm:text-lg"
-                  >
-                    {DIFF[diffKey].time}
-                  </span>
-                  <span className="text-[8px] font-bold text-[#9fb0bf]">s</span>
-                </div>
-              </div>
+              <button
+                type="button"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  simRef.current?.endGame();
+                }}
+                onClick={(e) => {
+                  if (e.detail === 0) simRef.current?.endGame();
+                }}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-[#c6ff3d]/55 bg-[#4f7a2e]/90 px-3 text-xs font-extrabold text-white shadow-lg transition hover:bg-[#5e9238] cursor-pointer whitespace-nowrap"
+              >
+                <Flag className="h-3.5 w-3.5 text-[#c6ff3d]" aria-hidden="true" />
+                <span className="hidden sm:inline">Kết thúc & Lưu</span>
+                <span className="sm:hidden">Lưu</span>
+              </button>
             </div>
           </div>
 
@@ -2745,60 +2740,69 @@ export function TankGateGame({
               showGateHint ? 'opacity-100' : 'opacity-0'
             }`}
           >
-            <span ref={gateHintTextRef}>CỔNG 1/{hudTotal}</span>
+            <span ref={gateHintTextRef}>CỔNG 1 · VÒNG 1</span>
           </div>
 
           <div className="pointer-events-none absolute inset-0">
-            <div
-              role="button"
-              tabIndex={-1}
+            {/* Nút điều khiển Trái / Phải dành cho Mobile */}
+            <button
+              type="button"
               aria-label="Rẽ trái"
               onPointerDown={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 handleSteerDown('left', e.pointerId);
               }}
               onPointerUp={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 handleSteerUp('left', e.pointerId);
               }}
               onPointerCancel={(e) => handleSteerUp('left', e.pointerId)}
               onPointerLeave={(e) => handleSteerUp('left', e.pointerId)}
-              className={`pointer-events-auto absolute bottom-0 left-0 top-[28%] z-10 flex w-[42%] flex-col items-center justify-end pb-4 touch-none select-none transition-colors sm:w-[36%] ${
+              className={`pointer-events-auto md:hidden absolute bottom-4 left-3 z-20 flex h-16 w-24 flex-col items-center justify-center rounded-2xl border-2 touch-none select-none transition-all ${
                 steerLeftActive
-                  ? 'bg-gradient-to-r from-[#c6ff3d]/20 to-transparent text-[#c6ff3d]'
-                  : 'bg-gradient-to-r from-[#8fc44a]/10 to-transparent text-[#f4efe2]/45'
+                  ? 'border-[#c6ff3d] bg-[#c6ff3d]/30 text-[#c6ff3d] scale-95'
+                  : 'border-white/25 bg-[#0c1522]/80 text-white'
               }`}
             >
               <ChevronLeft className="h-7 w-7" aria-hidden="true" />
-              <span className="text-[9.5px] font-extrabold tracking-widest">
-                RẼ TRÁI
+              <span className="text-[10px] font-extrabold tracking-wider">
+                TRÁI
               </span>
-            </div>
+            </button>
 
-            <div
-              role="button"
-              tabIndex={-1}
+            <button
+              type="button"
               aria-label="Rẽ phải"
               onPointerDown={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 handleSteerDown('right', e.pointerId);
               }}
               onPointerUp={(e) => {
                 e.preventDefault();
+                e.stopPropagation();
                 handleSteerUp('right', e.pointerId);
               }}
               onPointerCancel={(e) => handleSteerUp('right', e.pointerId)}
               onPointerLeave={(e) => handleSteerUp('right', e.pointerId)}
-              className={`pointer-events-auto absolute bottom-0 right-0 top-[28%] z-10 flex w-[42%] flex-col items-center justify-end pb-4 touch-none select-none transition-colors sm:w-[36%] ${
+              className={`pointer-events-auto md:hidden absolute bottom-4 right-3 z-20 flex h-16 w-24 flex-col items-center justify-center rounded-2xl border-2 touch-none select-none transition-all ${
                 steerRightActive
-                  ? 'bg-gradient-to-l from-[#c6ff3d]/20 to-transparent text-[#c6ff3d]'
-                  : 'bg-gradient-to-l from-[#8fc44a]/10 to-transparent text-[#f4efe2]/45'
+                  ? 'border-[#c6ff3d] bg-[#c6ff3d]/30 text-[#c6ff3d] scale-95'
+                  : 'border-white/25 bg-[#0c1522]/80 text-white'
               }`}
             >
               <ChevronRight className="h-7 w-7" aria-hidden="true" />
-              <span className="text-[9.5px] font-extrabold tracking-widest">
-                RẼ PHẢI
+              <span className="text-[10px] font-extrabold tracking-wider">
+                PHẢI
               </span>
+            </button>
+
+            {/* Gợi ý kéo chuột trên PC */}
+            <div className="pointer-events-none hidden md:flex absolute bottom-4 left-1/2 -translate-x-1/2 items-center gap-2 rounded-full border border-white/15 bg-[#060b12]/75 px-3.5 py-1 text-[11px] font-semibold text-[#cbd8e2]">
+              <ArrowLeftRight className="h-3.5 w-3.5 text-[#39e0ff]" aria-hidden="true" />
+              <span>Kéo chuột trái/phải để lái xe tăng · hoặc A / D</span>
             </div>
 
             <button
@@ -2812,7 +2816,7 @@ export function TankGateGame({
               onClick={(e) => {
                 if (e.detail === 0) simRef.current?.activateDrift();
               }}
-              className={`pointer-events-auto absolute bottom-4 left-4 z-20 flex h-[72px] w-[72px] flex-col items-center justify-center overflow-hidden rounded-full border-2 border-[#fff3c4] bg-gradient-to-br from-[#ffe27a] via-[#ffc21f] to-[#e08a00] text-[#08121b] shadow-xl touch-none select-none transition-transform active:scale-90 sm:bottom-5 sm:left-5 sm:h-[84px] sm:w-[84px] cursor-pointer ${
+              className={`pointer-events-auto absolute bottom-24 left-3 z-20 flex h-14 w-16 flex-col items-center justify-center overflow-hidden rounded-full border-2 border-[#fff3c4] bg-gradient-to-br from-[#ffe27a] via-[#ffc21f] to-[#e08a00] text-[#08121b] shadow-xl touch-none select-none transition-transform active:scale-90 md:bottom-5 md:left-5 md:h-[84px] md:w-[84px] cursor-pointer ${
                 driftActive
                   ? 'brightness-125 ring-4 ring-[#ffc21f]/60'
                   : driftCooling
@@ -2820,8 +2824,8 @@ export function TankGateGame({
                     : ''
               }`}
             >
-              <Flame className="h-5 w-5 sm:h-6 sm:w-6" aria-hidden="true" />
-              <span className="text-[11px] font-extrabold tracking-wider">
+              <Flame className="h-4 w-4 md:h-6 md:w-6" aria-hidden="true" />
+              <span className="text-[9.5px] md:text-[11px] font-extrabold tracking-wider">
                 DRIFT
               </span>
               <div
@@ -2831,8 +2835,8 @@ export function TankGateGame({
               />
             </button>
 
-            <div className="pointer-events-auto absolute right-4 bottom-4 z-20 flex flex-col items-center gap-1.5 sm:right-5 sm:bottom-5">
-              <div className="h-2 w-[72px] overflow-hidden rounded-full border border-[#39e0ff]/45 bg-[#060b12]/85 sm:w-[84px]">
+            <div className="pointer-events-auto absolute right-3 bottom-24 z-20 flex flex-col items-center gap-1 md:right-5 md:bottom-5 md:gap-1.5">
+              <div className="h-1.5 w-16 overflow-hidden rounded-full border border-[#39e0ff]/45 bg-[#060b12]/85 md:h-2 md:w-[84px]">
                 <div
                   ref={nitroFillRef}
                   className="h-full rounded-full bg-gradient-to-r from-[#2f7dff] to-[#39e0ff] transition-[width] duration-100"
@@ -2850,7 +2854,7 @@ export function TankGateGame({
                 onClick={(e) => {
                   if (e.detail === 0) simRef.current?.activateNitro();
                 }}
-                className={`flex h-[72px] w-[72px] flex-col items-center justify-center rounded-full border-2 border-[#cfe6ff] bg-gradient-to-br from-[#9fd0ff] via-[#2f7dff] to-[#1246b8] text-[#04121f] shadow-xl touch-none select-none transition-transform active:scale-90 sm:h-[84px] sm:w-[84px] cursor-pointer ${
+                className={`flex h-14 w-16 flex-col items-center justify-center rounded-full border-2 border-[#cfe6ff] bg-gradient-to-br from-[#9fd0ff] via-[#2f7dff] to-[#1246b8] text-[#04121f] shadow-xl touch-none select-none transition-transform active:scale-90 md:h-[84px] md:w-[84px] cursor-pointer ${
                   nitroActive
                     ? 'brightness-125 ring-4 ring-[#39e0ff]/75'
                     : !nitroReady
@@ -2858,8 +2862,8 @@ export function TankGateGame({
                       : 'ring-2 ring-[#39e0ff]/55'
                 }`}
               >
-                <Zap className="h-5 w-5 sm:h-6 sm:w-6" aria-hidden="true" />
-                <span className="text-[11px] font-extrabold tracking-wider">
+                <Zap className="h-4 w-4 md:h-6 md:w-6" aria-hidden="true" />
+                <span className="text-[9.5px] md:text-[11px] font-extrabold tracking-wider">
                   NITRO
                 </span>
               </button>
@@ -2926,7 +2930,7 @@ export function TankGateGame({
               <div className="flex items-center justify-between gap-2">
                 <div className="inline-flex items-center gap-1.5 rounded-full border border-[#8fc44a]/40 bg-[#4f7a2e]/20 px-2.5 py-1 text-[10px] font-extrabold tracking-[0.18em] text-[#8fc44a]">
                   <Shield className="h-3 w-3" aria-hidden="true" />
-                  <span>LEXICARD · MINI GAME 3D</span>
+                  <span>LEXICARD · VÒNG LẶP VÔ HẠN</span>
                 </div>
 
                 <button
@@ -2948,10 +2952,10 @@ export function TankGateGame({
                   HÚC <span className="text-[#ffc21f]">CỔNG 3D</span>
                 </h2>
                 <p className="mt-1.5 text-xs leading-relaxed text-[#cbd8e2] sm:text-sm">
-                  Lái xe tăng <strong className="text-[#c6ff3d]">390</strong> húc
-                  đổ cổng mang nghĩa đúng của bộ thẻ{' '}
-                  <strong className="text-white">{deckTitle}</strong>. Đúng cộng
-                  giây & combo, sai trừ giây.
+                  Lái xe tăng <strong className="text-[#c6ff3d]">390</strong> trên
+                  đường thẳng húc cổng mang nghĩa đúng của bộ thẻ{' '}
+                  <strong className="text-white">{deckTitle}</strong>. Không giới
+                  hạn thời gian — luyện lặp toàn bộ flashcard và lưu điểm khi xong.
                 </p>
               </div>
 
@@ -3004,7 +3008,7 @@ export function TankGateGame({
 
               <div>
                 <div className="mb-1.5 text-[10px] font-extrabold tracking-[0.18em] text-[#9fb0bf]">
-                  ĐỘ KHÓ ĐƯỜNG ĐUA
+                  TỐC ĐỘ CHẠY
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {(['easy', 'normal', 'hard'] as const).map((k) => {
@@ -3024,7 +3028,7 @@ export function TankGateGame({
                           {cfg.label}
                         </div>
                         <div className="text-[10px] text-[#9fb0bf]">
-                          {cfg.time}s · {cfg.gates} cổng
+                          {cfg.speedDesc}
                         </div>
                       </button>
                     );
@@ -3038,7 +3042,7 @@ export function TankGateGame({
                   onClick={handleStart}
                   className="inline-flex min-h-[48px] items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-[#c6ff3d] via-[#8fc44a] to-[#5fae2f] px-6 py-3 text-sm font-black tracking-wider text-[#0a1408] shadow-lg transition hover:brightness-105 active:scale-95 cursor-pointer"
                 >
-                  <span>VÀO ĐƯỜNG ĐUA</span>
+                  <span>BẮT ĐẦU LUYỆN</span>
                   <ArrowRight className="h-4 w-4" aria-hidden="true" />
                 </button>
 
@@ -3061,10 +3065,10 @@ export function TankGateGame({
                   </div>
                   <div className="hidden rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 sm:block">
                     <div className="text-[9px] font-extrabold tracking-widest text-[#9fb0bf]">
-                      LƯỢT CHƠI
+                      SỐ THẺ
                     </div>
                     <div className="font-mono-tabular text-base font-extrabold text-white">
-                      {playCount}
+                      {cards.length}
                     </div>
                   </div>
                 </div>
@@ -3081,9 +3085,9 @@ export function TankGateGame({
                     ◀ ▶
                   </span>
                   <span>
-                    Giữ nửa trái / phải màn hình để đánh lái. PC dùng{' '}
-                    <strong className="text-white">A / D</strong> hoặc{' '}
-                    <strong className="text-white">← / →</strong>.
+                    <strong className="text-white">Mobile</strong>: Bấm nút Trái / Phải.{' '}
+                    <strong className="text-white">PC</strong>: Kéo chuột sang trái / phải trên đường thẳng (hoặc{' '}
+                    <strong className="text-white">A / D</strong>).
                   </span>
                 </li>
                 <li className="flex items-start gap-2">
@@ -3091,7 +3095,7 @@ export function TankGateGame({
                     DRIFT
                   </span>
                   <span>
-                    Ôm cua gấp để tích <strong className="text-white">Nitro</strong>. Phím{' '}
+                    Đánh lái nhanh & tích <strong className="text-white">Nitro</strong>. Phím{' '}
                     <strong className="text-white">Shift</strong>.
                   </span>
                 </li>
@@ -3107,10 +3111,10 @@ export function TankGateGame({
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="shrink-0 rounded-md bg-[#3ddc84] px-1.5 py-0.5 text-[10px] font-extrabold text-[#04220f]">
-                    +CỔNG
+                    VÔ HẠN
                   </span>
                   <span>
-                    Húc đúng cộng điểm + giây + combo. Sai trừ giây & mất combo.
+                    Luyện lặp liên tục từ vựng trong bộ thẻ, không giới hạn thời gian. Bấm <strong className="text-white">Kết thúc & Lưu</strong> bất cứ lúc nào.
                   </span>
                 </li>
                 <li className="flex items-start gap-2">
@@ -3119,7 +3123,7 @@ export function TankGateGame({
                   </span>
                   <span>
                     Nhặt tinh thể xanh trên đường:{' '}
-                    <strong className="text-white">+Nitro, +1s, +25 điểm</strong>.
+                    <strong className="text-white">+Nitro, +25 điểm</strong>.
                   </span>
                 </li>
               </ul>
@@ -3199,6 +3203,14 @@ export function TankGateGame({
               </button>
               <button
                 type="button"
+                onClick={() => simRef.current?.endGame()}
+                className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-xl border border-[#c6ff3d]/45 bg-[#4f7a2e]/40 px-4 py-2 text-xs font-bold text-[#c6ff3d] hover:bg-[#4f7a2e]/60 cursor-pointer"
+              >
+                <Flag className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>KẾT THÚC & LƯU ĐIỂM</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => simRef.current?.startGame()}
                 className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-bold text-white hover:border-[#c6ff3d] cursor-pointer"
               >
@@ -3237,10 +3249,8 @@ export function TankGateGame({
               </div>
               <div className="min-w-0">
                 <div className="text-[10px] font-extrabold tracking-[0.18em] text-[#ffc21f]">
-                  {resultStats.reason === 'time'
-                    ? 'HẾT GIỜ'
-                    : 'HOÀN THÀNH ĐƯỜNG ĐUA'}{' '}
-                  · {DIFF[diffKey].label.toUpperCase()}
+                  HOÀN THÀNH LUYỆN TẬP · VÒNG {resultStats.cycles} ·{' '}
+                  {DIFF[diffKey].label.toUpperCase()}
                 </div>
                 <h3 className="font-display text-2xl font-black text-white">
                   {resultStats.title}
@@ -3296,17 +3306,17 @@ export function TankGateGame({
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="text-[9px] font-extrabold tracking-widest text-[#9fb0bf]">
-                  GIÂY DƯ
+                  CHÍNH XÁC
                 </div>
                 <div className="mt-0.5 font-mono-tabular text-xl font-black text-white">
-                  {resultStats.timeLeft}s
+                  {resultStats.accuracy}%
                 </div>
               </div>
             </div>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
               <div className="text-[11px] font-extrabold tracking-[0.18em] text-[#ffc21f]">
-                XEM LẠI TỪ VỰNG (+{resultStats.timeBonus}đ thưởng thời gian)
+                XEM LẠI TỪ VỰNG ({resultStats.total} CỔNG ĐÃ QUA)
               </div>
               <button
                 type="button"
