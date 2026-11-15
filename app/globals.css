@@ -15,6 +15,11 @@
     font-family: var(--font-mono), ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
   }
+
+  button,
+  [role="button"] {
+    touch-action: manipulation;
+  }
 }
 
 /* 3D Tactile Flashcard Flip Utilities */

@@ -50,6 +50,7 @@ interface QuizGateState {
 }
 
 interface DragState {
+  pointerId: number;
   piece: PieceShape;
   startX: number;
   startY: number;
@@ -175,6 +176,34 @@ function canAnyPieceFit(board: CellColor[][], tray: PieceShape[]): boolean {
   return tray.some((piece) => canPieceFitAnywhere(board, piece));
 }
 
+function findBestTapAnchor(
+  board: CellColor[][],
+  piece: PieceShape,
+  row: number,
+  col: number
+): [number, number] | null {
+  if (canPlacePiece(board, piece, row, col)) return [row, col];
+
+  const maxR = Math.max(...piece.cells.map(([r]) => r));
+  const maxC = Math.max(...piece.cells.map(([, c]) => c));
+  const centeredR = Math.max(0, Math.min(GRID_SIZE - 1 - maxR, row - Math.floor(maxR / 2)));
+  const centeredC = Math.max(0, Math.min(GRID_SIZE - 1 - maxC, col - Math.floor(maxC / 2)));
+  if (canPlacePiece(board, piece, centeredR, centeredC)) {
+    return [centeredR, centeredC];
+  }
+
+  for (let dist = 1; dist <= 2; dist++) {
+    for (let dr = -dist; dr <= dist; dr++) {
+      for (let dc = -dist; dc <= dist; dc++) {
+        const nr = row + dr;
+        const nc = col + dc;
+        if (canPlacePiece(board, piece, nr, nc)) return [nr, nc];
+      }
+    }
+  }
+  return null;
+}
+
 function generateSmartTray(board: CellColor[][], count = 3): PieceShape[] {
   const pieces: PieceShape[] = [];
   for (let i = 0; i < count; i++) {
@@ -260,6 +289,7 @@ export function BlockBlastGame({
   );
 
   const gridInnerRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<DragState | null>(null);
   const boardRef = useRef(board);
   const trayRef = useRef(tray);
   const scoreRef = useRef(score);
@@ -449,65 +479,86 @@ export function BlockBlastGame({
     [cards, pool, autoSpeak, finishGame]
   );
 
-  // Window-level pointer drag listeners
+  // Window-level pointer drag listeners (pure ref-backed, no side effects inside updaters)
   const isDragging = Boolean(dragState);
   useEffect(() => {
     if (!isDragging) return;
 
     const handleMove = (ev: PointerEvent) => {
-      setDragState((prev) => {
-        if (!prev) return null;
-        const dist = Math.hypot(ev.clientX - prev.startX, ev.clientY - prev.startY);
-        const hasMoved = prev.hasMoved || dist > 6;
-        if (hasMoved) {
-          const anchor = computeAnchorFromPointer(
-            prev.piece,
-            ev.clientX,
-            ev.clientY,
-            prev.pointerType
-          );
-          setHoverAnchor(anchor);
-        }
-        return {
-          ...prev,
-          clientX: ev.clientX,
-          clientY: ev.clientY,
-          hasMoved,
-        };
-      });
+      const cur = dragRef.current;
+      if (!cur || ev.pointerId !== cur.pointerId) return;
+
+      const dist = Math.hypot(ev.clientX - cur.startX, ev.clientY - cur.startY);
+      const hasMoved = cur.hasMoved || dist > 10;
+      const next: DragState = {
+        ...cur,
+        clientX: ev.clientX,
+        clientY: ev.clientY,
+        hasMoved,
+      };
+      dragRef.current = next;
+      setDragState(next);
+
+      if (hasMoved) {
+        const anchor = computeAnchorFromPointer(
+          cur.piece,
+          ev.clientX,
+          ev.clientY,
+          cur.pointerType
+        );
+        setHoverAnchor(anchor);
+      }
     };
 
-    const handleUp = (ev: PointerEvent) => {
-      setDragState((prev) => {
-        if (!prev) return null;
-        if (prev.hasMoved) {
-          const anchor = computeAnchorFromPointer(
-            prev.piece,
-            ev.clientX,
-            ev.clientY,
-            prev.pointerType
-          );
-          if (anchor) {
-            placePieceOnBoard(prev.piece, anchor[0], anchor[1]);
-          } else {
-            setHoverAnchor(null);
-          }
-        } else {
-          // Quick tap selects/deselects piece for tap-to-place accessibility
-          setSelectedPieceId((cur) => (cur === prev.piece.id ? null : prev.piece.id));
-          setHoverAnchor(null);
-        }
-        return null;
-      });
+    const handleTouchMove = (ev: TouchEvent) => {
+      if (dragRef.current && ev.cancelable) {
+        ev.preventDefault();
+      }
     };
+
+    const finishDrag = (ev: PointerEvent, cancelled: boolean) => {
+      const cur = dragRef.current;
+      if (!cur || ev.pointerId !== cur.pointerId) return;
+
+      dragRef.current = null;
+      setDragState(null);
+
+      if (!cancelled && cur.hasMoved) {
+        const anchor = computeAnchorFromPointer(
+          cur.piece,
+          ev.clientX,
+          ev.clientY,
+          cur.pointerType
+        );
+        if (anchor && placePieceOnBoard(cur.piece, anchor[0], anchor[1])) {
+          return;
+        }
+        const dist = Math.hypot(ev.clientX - cur.startX, ev.clientY - cur.startY);
+        if (!anchor && dist < 24) {
+          setSelectedPieceId((id) => (id === cur.piece.id ? null : cur.piece.id));
+        }
+        setHoverAnchor(null);
+      } else if (!cancelled) {
+        // Tap / click toggles piece selection for tap-to-place mode
+        setSelectedPieceId((id) => (id === cur.piece.id ? null : cur.piece.id));
+        setHoverAnchor(null);
+      } else {
+        setHoverAnchor(null);
+      }
+    };
+
+    const handleUp = (ev: PointerEvent) => finishDrag(ev, false);
+    const handleCancel = (ev: PointerEvent) => finishDrag(ev, true);
 
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
-    window.addEventListener('pointercancel', handleUp);
+    window.addEventListener('pointercancel', handleCancel);
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
     return () => {
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
-      window.removeEventListener('pointercancel', handleUp);
+      window.removeEventListener('pointercancel', handleCancel);
+      window.removeEventListener('touchmove', handleTouchMove);
     };
   }, [isDragging, computeAnchorFromPointer, placePieceOnBoard]);
 
@@ -515,23 +566,35 @@ export function BlockBlastGame({
     e: ReactPointerEvent<HTMLDivElement>,
     piece: PieceShape
   ) {
-    if (quizGate) return;
+    if (quizGate || dragRef.current) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
     e.preventDefault();
+
+    try {
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+    } catch {
+      // Ignore if pointer capture is unsupported
+    }
+
     if (gridInnerRef.current) {
       const rect = gridInnerRef.current.getBoundingClientRect();
       if (rect.width > 0) {
         setCellSizePx(Math.round(rect.width / GRID_SIZE));
       }
     }
-    setDragState({
+
+    const nextDrag: DragState = {
+      pointerId: e.pointerId,
       piece,
       startX: e.clientX,
       startY: e.clientY,
       clientX: e.clientX,
       clientY: e.clientY,
-      pointerType: e.pointerType,
+      pointerType: e.pointerType || 'mouse',
       hasMoved: false,
-    });
+    };
+    dragRef.current = nextDrag;
+    setDragState(nextDrag);
   }
 
   function handleAnswerGate(pickedCard: Flashcard) {
@@ -698,16 +761,18 @@ export function BlockBlastGame({
         <span className="flex items-center gap-1.5">
           <Sparkles className="h-3.5 w-3.5 shrink-0 text-amber-300" aria-hidden="true" />
           <span>
-            Kéo & thả khối vào lưới 8×8. Khi xếp đầy hàng/cột nổ khối sẽ mở câu hỏi!
+            {selectedPiece
+              ? 'Chạm vào ô trên lưới 8×8 để đặt khối, hoặc kéo thả trực tiếp.'
+              : 'Kéo thả khối (hoặc chạm chọn khối rồi chạm ô) vào lưới 8×8 để nổ hàng!'}
           </span>
         </span>
       </div>
 
       {/* 8x8 Block Puzzle Grid */}
-      <div className="mt-4 mx-auto w-full max-w-[360px] rounded-xl border border-indigo-800/80 bg-[#171c4d] p-2">
+      <div className="mt-4 mx-auto w-full max-w-[360px] rounded-xl border border-indigo-800/80 bg-[#171c4d] p-2 select-none">
         <div
           ref={gridInnerRef}
-          className="grid grid-cols-8 gap-1"
+          className="grid grid-cols-8 gap-1 touch-manipulation"
           onMouseLeave={() => {
             if (!dragState) setHoverAnchor(null);
           }}
@@ -739,14 +804,20 @@ export function BlockBlastGame({
                   aria-label={`Ô ${r + 1},${c + 1}`}
                   disabled={Boolean(quizGate)}
                   onMouseEnter={() => {
-                    if (!dragState && selectedPiece) setHoverAnchor([r, c]);
+                    if (!dragState && selectedPiece) {
+                      const anchor = findBestTapAnchor(board, selectedPiece, r, c);
+                      setHoverAnchor(anchor ?? [r, c]);
+                    }
                   }}
                   onClick={() => {
                     if (!quizGate && selectedPiece) {
-                      placePieceOnBoard(selectedPiece, r, c);
+                      const anchor = findBestTapAnchor(board, selectedPiece, r, c);
+                      if (anchor) {
+                        placePieceOnBoard(selectedPiece, anchor[0], anchor[1]);
+                      }
                     }
                   }}
-                  className={`aspect-square w-full rounded-[5px] border transition-all duration-100 ${
+                  className={`aspect-square w-full rounded-[5px] border transition-all duration-100 touch-manipulation ${
                     selectedPiece ? 'cursor-pointer' : 'cursor-default'
                   } ${cellCls}`}
                 />
@@ -757,7 +828,7 @@ export function BlockBlastGame({
       </div>
 
       {/* Bottom 3-Piece Drag Tray */}
-      <div className="mt-4 flex min-h-[88px] items-center justify-center gap-4 sm:gap-7">
+      <div className="mt-4 flex min-h-[88px] items-center justify-center gap-4 sm:gap-7 touch-none select-none">
         {tray.map((piece) => {
           const maxR = Math.max(...piece.cells.map(([r]) => r)) + 1;
           const maxC = Math.max(...piece.cells.map(([, c]) => c)) + 1;

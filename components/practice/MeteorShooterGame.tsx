@@ -96,6 +96,8 @@ export function MeteorShooterGame({
   const [statusHint, setStatusHint] = useState<string | null>(null);
 
   const currentCard = cards[waveCount % Math.max(1, cards.length)];
+  const orbsRef = useRef(orbs);
+  const waveCountRef = useRef(waveCount);
   const waveLockedRef = useRef(false);
   const completedRef = useRef(false);
   const hadMissInWaveRef = useRef(false);
@@ -104,6 +106,12 @@ export function MeteorShooterGame({
   const maxStreakRef = useRef(maxStreak);
   const resultsRef = useRef(results);
 
+  useEffect(() => {
+    orbsRef.current = orbs;
+  }, [orbs]);
+  useEffect(() => {
+    waveCountRef.current = waveCount;
+  }, [waveCount]);
   useEffect(() => {
     scoreRef.current = score;
   }, [score]);
@@ -143,8 +151,11 @@ export function MeteorShooterGame({
     (nextWaveIndex: number) => {
       if (completedRef.current || cards.length === 0) return;
       const nextCard = cards[nextWaveIndex % cards.length];
+      const nextOrbs = buildWaveOrbs(nextCard, pool);
+      waveCountRef.current = nextWaveIndex;
+      orbsRef.current = nextOrbs;
       setWaveCount(nextWaveIndex);
-      setOrbs(buildWaveOrbs(nextCard, pool));
+      setOrbs(nextOrbs);
       setLaserTarget(null);
       setStatusHint(null);
       hadMissInWaveRef.current = false;
@@ -161,34 +172,38 @@ export function MeteorShooterGame({
   useEffect(() => {
     if (!currentCard || completedRef.current) return;
     const id = window.setInterval(() => {
-      if (waveLockedRef.current) return;
-      setOrbs((prev) => {
-        const next = prev.map((o) => ({ ...o, yPct: o.yPct + o.speed }));
-        const hitBottom = next.some((o) => !o.disabledWrong && o.yPct >= 86);
-        if (hitBottom) {
-          waveLockedRef.current = true;
-          setWaveLocked(true);
-          setStreak(0);
-          setStatusHint('Thiên thạch vừa bay qua — nạp đợt tiếp theo!');
-          const updatedResults: PracticeResultItem[] = [
-            ...resultsRef.current,
-            {
-              cardId: currentCard.id,
-              term: currentCard.term,
-              meaning: currentCard.meaning,
-              isCorrect: false,
-            },
-          ];
-          setResults(updatedResults);
-          window.setTimeout(() => {
-            spawnNextWave(waveCount + 1);
-          }, 700);
-        }
-        return next;
-      });
+      if (waveLockedRef.current || completedRef.current) return;
+      const next = orbsRef.current.map((o) => ({
+        ...o,
+        yPct: o.yPct + o.speed,
+      }));
+      orbsRef.current = next;
+      setOrbs(next);
+
+      const hitBottom = next.some((o) => !o.disabledWrong && o.yPct >= 86);
+      if (hitBottom) {
+        waveLockedRef.current = true;
+        setWaveLocked(true);
+        setStreak(0);
+        setStatusHint('Thiên thạch vừa bay qua — nạp đợt tiếp theo!');
+        const updatedResults: PracticeResultItem[] = [
+          ...resultsRef.current,
+          {
+            cardId: currentCard.id,
+            term: currentCard.term,
+            meaning: currentCard.meaning,
+            isCorrect: false,
+          },
+        ];
+        resultsRef.current = updatedResults;
+        setResults(updatedResults);
+        window.setTimeout(() => {
+          spawnNextWave(waveCountRef.current + 1);
+        }, 700);
+      }
     }, 55);
     return () => window.clearInterval(id);
-  }, [currentCard, waveCount, spawnNextWave]);
+  }, [currentCard, spawnNextWave]);
 
   function handleShootOrb(orb: MeteorOrb) {
     if (
@@ -372,15 +387,24 @@ export function MeteorShooterGame({
               key={orb.uid}
               type="button"
               disabled={waveLocked || orb.disabledWrong}
-              onClick={() => handleShootOrb(orb)}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleShootOrb(orb);
+              }}
+              onClick={(e) => {
+                if (e.detail === 0) {
+                  handleShootOrb(orb);
+                }
+              }}
               style={{
                 left: `${orb.xPct}%`,
                 top: `${orb.yPct}%`,
                 transform: 'translate(-50%, -50%)',
               }}
-              className={`absolute flex h-24 w-24 sm:h-28 sm:w-28 items-center justify-center rounded-full border-2 p-2.5 text-center transition-transform duration-150 ${orbStyle}`}
+              className={`absolute z-10 touch-none select-none flex h-24 w-24 sm:h-28 sm:w-28 items-center justify-center rounded-full border-2 p-2.5 text-center transition-transform duration-150 ${orbStyle}`}
             >
-              <span className="text-xs sm:text-sm font-bold leading-tight break-words line-clamp-3">
+              <span className="pointer-events-none text-xs sm:text-sm font-bold leading-tight break-words line-clamp-3">
                 {orb.label}
               </span>
             </button>

@@ -413,12 +413,12 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.88 }}
                       transition={{ duration: 0.18 }}
-                      className={`flex min-h-[58px] sm:min-h-[64px] items-center justify-between gap-1.5 rounded-xl border px-2.5 py-2 sm:px-3.5 sm:py-3 transition-colors ${cls}`}
+                      className={`flex min-h-[58px] sm:min-h-[64px] items-center justify-between gap-1 rounded-xl border pr-1.5 sm:pr-2.5 transition-colors ${cls}`}
                     >
                       <button
                         type="button"
                         onClick={() => handleSelectLeft(card.id)}
-                        className="flex-1 min-w-0 text-left cursor-pointer"
+                        className="flex-1 min-w-0 min-h-[58px] sm:min-h-[64px] px-2.5 py-2 sm:px-3.5 sm:py-3 text-left touch-manipulation select-none cursor-pointer"
                       >
                         <div className="font-display text-xs sm:text-sm font-bold leading-snug break-words">
                           {card.term}
@@ -482,7 +482,7 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
                       transition={{ duration: 0.18 }}
                       type="button"
                       onClick={() => handleSelectRight(card.id)}
-                      className={`flex min-h-[58px] sm:min-h-[64px] w-full items-center rounded-xl border px-2.5 py-2 sm:px-3.5 sm:py-3 text-left text-xs sm:text-sm font-medium transition-colors cursor-pointer ${cls}`}
+                      className={`flex min-h-[58px] sm:min-h-[64px] w-full items-center rounded-xl border px-2.5 py-2 sm:px-3.5 sm:py-3 text-left text-xs sm:text-sm font-medium transition-colors touch-manipulation select-none cursor-pointer ${cls}`}
                     >
                       <span className="leading-snug break-words">
                         {card.meaning}
@@ -541,7 +541,7 @@ export function MatchMode({ cards, onComplete }: MatchModeProps) {
                 }}
                 transition={{ duration: 0.18 }}
                 onClick={() => handleSelectTile(tile)}
-                className={`flex min-h-[76px] sm:min-h-[96px] flex-col items-center justify-center rounded-xl border p-1.5 sm:p-3 text-center transition-colors cursor-pointer ${cls}`}
+                className={`flex min-h-[76px] sm:min-h-[96px] flex-col items-center justify-center rounded-xl border p-1.5 sm:p-3 text-center transition-colors touch-manipulation select-none cursor-pointer ${cls}`}
               >
                 {isFaceUp ? (
                   <>

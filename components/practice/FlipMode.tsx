@@ -45,6 +45,7 @@ export function FlipMode({
   >({});
 
   const touchStartX = useRef<number | null>(null);
+  const swipedRef = useRef(false);
 
   const current = cards[index];
   const total = cards.length;
@@ -226,8 +227,9 @@ export function FlipMode({
 
       {/* 3D Flip Card with Touch Swipe */}
       <div
-        className="card-perspective h-[310px] sm:h-96 select-none"
+        className="card-perspective h-[310px] sm:h-96 select-none touch-manipulation"
         onTouchStart={(e) => {
+          swipedRef.current = false;
           touchStartX.current = e.changedTouches[0]?.clientX ?? null;
         }}
         onTouchEnd={(e) => {
@@ -236,6 +238,7 @@ export function FlipMode({
           const delta = endX - touchStartX.current;
           touchStartX.current = null;
           if (Math.abs(delta) > 55) {
+            swipedRef.current = true;
             setAutoplay(false);
             if (delta < 0 && index + 1 < total) {
               setIsFlipped(false);
@@ -256,6 +259,10 @@ export function FlipMode({
               : `Mặt trước: ${frontTitle}. Nhấn để xem đáp án`
           }
           onClick={() => {
+            if (swipedRef.current) {
+              swipedRef.current = false;
+              return;
+            }
             setAutoplay(false);
             setIsFlipped((prev) => !prev);
           }}
@@ -271,7 +278,11 @@ export function FlipMode({
           }`}
         >
           {/* Front Face */}
-          <div className="card-face flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-8">
+          <div
+            className={`card-face flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-8 ${
+              isFlipped ? 'pointer-events-none' : 'pointer-events-auto'
+            }`}
+          >
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
                 {frontSide === 'en' ? 'Tiếng Anh' : 'Tiếng Việt'}
@@ -341,7 +352,11 @@ export function FlipMode({
           </div>
 
           {/* Back Face */}
-          <div className="card-face card-face-back flex flex-col justify-between rounded-2xl border border-sky-200 bg-slate-50 p-5 shadow-sm dark:border-sky-900/70 dark:bg-slate-900 sm:p-8">
+          <div
+            className={`card-face card-face-back flex flex-col justify-between rounded-2xl border border-sky-200 bg-slate-50 p-5 shadow-sm dark:border-sky-900/70 dark:bg-slate-900 sm:p-8 ${
+              isFlipped ? 'pointer-events-auto' : 'pointer-events-none'
+            }`}
+          >
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium text-sky-700 dark:text-sky-400">
                 {frontSide === 'en' ? 'Nghĩa & Ví dụ' : 'Từ tiếng Anh'}
