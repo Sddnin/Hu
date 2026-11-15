@@ -17,6 +17,7 @@ import {
   UploadCloud,
   Volume2,
   X,
+  Zap,
 } from 'lucide-react';
 import { PracticePoolFilter } from '@/components/PracticeArena';
 import { speakEnglish } from '@/lib/speech';
@@ -95,6 +96,7 @@ interface DecksViewProps {
     cards: CommunityCardItem[];
   }) => Promise<{ ok: boolean; error?: string; deck?: CommunityDeck }>;
   onGoToCommunity: () => void;
+  onOpenAuth: () => void;
 }
 
 export function DecksView({
@@ -116,6 +118,7 @@ export function DecksView({
   onToggleStar,
   onPublishDeckToCommunity,
   onGoToCommunity,
+  onOpenAuth,
 }: DecksViewProps) {
   const activeDeck =
     decks.find((d) => d.id === selectedDeckId) || decks[0] || null;
@@ -129,6 +132,11 @@ export function DecksView({
     deckId: string;
     ok: boolean;
     message: string;
+  } | null>(null);
+  const [publishModalData, setPublishModalData] = useState<{
+    title: string;
+    category: string;
+    description: string;
   } | null>(null);
 
   // Filters
@@ -335,6 +343,12 @@ export function DecksView({
   const weakCount = activeCards.filter(
     (c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7
   ).length;
+  const priorityCount = activeCards.filter(
+    (c) =>
+      c.mastery !== 'mastered' ||
+      c.starred ||
+      (c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7)
+  ).length;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
@@ -505,29 +519,16 @@ export function DecksView({
                         activeCards.length === 0 ||
                         publishingDeckId === activeDeck.id
                       }
-                      onClick={async () => {
-                        setPublishingDeckId(activeDeck.id);
+                      onClick={() => {
+                        if (!user) {
+                          onOpenAuth();
+                          return;
+                        }
                         setPublishFeedback(null);
-                        const result = await onPublishDeckToCommunity({
-                          sourceDeckId: activeDeck.id,
+                        setPublishModalData({
                           title: activeDeck.title,
-                          description: activeDeck.description,
                           category: activeDeck.category,
-                          cards: activeCards.map((c) => ({
-                            term: c.term,
-                            phonetic: c.phonetic,
-                            partOfSpeech: c.partOfSpeech,
-                            meaning: c.meaning,
-                            example: c.example,
-                          })),
-                        });
-                        setPublishingDeckId(null);
-                        setPublishFeedback({
-                          deckId: activeDeck.id,
-                          ok: result.ok,
-                          message: result.ok
-                            ? 'Đã đăng bộ thẻ lên Kho thẻ cộng đồng!'
-                            : result.error || 'Không thể đăng tải bộ thẻ.',
+                          description: activeDeck.description,
                         });
                       }}
                       title="Đăng tải bộ thẻ này lên Kho thẻ để mọi người cùng học"
@@ -673,6 +674,31 @@ export function DecksView({
                     )}
                   </div>
                 )}
+
+                {/* Quick Priority Practice Banner Button */}
+                <div className="flex flex-col gap-2.5 rounded-xl border border-sky-200 bg-sky-50/70 p-3.5 dark:border-sky-900/60 dark:bg-sky-950/25 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Học ngay các thẻ ưu tiên cao
+                    </div>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      {priorityCount > 0
+                        ? `Ưu tiên ${priorityCount} thẻ mới, hay sai & chưa thuộc với Xáo trộn thông minh.`
+                        : `Tất cả ${activeCards.length} thẻ đã thuộc — bắt đầu ôn lại nhanh ngay.`}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={activeCards.length === 0}
+                    onClick={() =>
+                      onStartPractice(activeDeck.id, 'learn', 'priority')
+                    }
+                    className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 py-2 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Zap className="h-4 w-4" aria-hidden="true" />
+                    <span>Luyện tập nhanh</span>
+                  </button>
+                </div>
 
                 {/* Practice Modes & Mini-Games Launcher Grid */}
                 <div className="pt-1">
@@ -1248,6 +1274,144 @@ export function DecksView({
                   className="min-h-[44px] rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 cursor-pointer"
                 >
                   Nhập thẻ vào bộ
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Publish to Community Modal (with editable Description) */}
+      {publishModalData && activeDeck && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-xs sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="deck-publish-modal-title"
+        >
+          <div className="w-full max-w-md rounded-t-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 sm:rounded-2xl">
+            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-700 sm:hidden" />
+            <div className="flex items-center justify-between">
+              <h3
+                id="deck-publish-modal-title"
+                className="font-display text-lg font-bold text-slate-900 dark:text-slate-100"
+              >
+                Đăng bộ thẻ lên Kho thẻ
+              </h3>
+              <button
+                type="button"
+                onClick={() => setPublishModalData(null)}
+                aria-label="Đóng"
+                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                if (!publishModalData.title.trim()) return;
+                setPublishingDeckId(activeDeck.id);
+                setPublishFeedback(null);
+                const result = await onPublishDeckToCommunity({
+                  sourceDeckId: activeDeck.id,
+                  title: publishModalData.title.trim(),
+                  description: publishModalData.description.trim(),
+                  category: publishModalData.category.trim() || 'Chung',
+                  cards: activeCards.map((c) => ({
+                    term: c.term,
+                    phonetic: c.phonetic,
+                    partOfSpeech: c.partOfSpeech,
+                    meaning: c.meaning,
+                    example: c.example,
+                  })),
+                });
+                setPublishingDeckId(null);
+                setPublishModalData(null);
+                setPublishFeedback({
+                  deckId: activeDeck.id,
+                  ok: result.ok,
+                  message: result.ok
+                    ? 'Đã đăng bộ thẻ lên Kho thẻ cộng đồng!'
+                    : result.error || 'Không thể đăng tải bộ thẻ.',
+                });
+              }}
+              className="mt-4 space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Tên bộ thẻ ({activeCards.length} thẻ)
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={LIMITS.TITLE_MAX}
+                  value={publishModalData.title}
+                  onChange={(e) =>
+                    setPublishModalData((prev) =>
+                      prev ? { ...prev, title: e.target.value } : null
+                    )
+                  }
+                  className="mt-1.5 min-h-[42px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Chủ đề
+                </label>
+                <input
+                  type="text"
+                  required
+                  maxLength={LIMITS.CATEGORY_MAX}
+                  value={publishModalData.category}
+                  onChange={(e) =>
+                    setPublishModalData((prev) =>
+                      prev ? { ...prev, category: e.target.value } : null
+                    )
+                  }
+                  className="mt-1.5 min-h-[42px] w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Mô tả bộ thẻ
+                </label>
+                <textarea
+                  rows={3}
+                  maxLength={LIMITS.DESC_MAX}
+                  value={publishModalData.description}
+                  onChange={(e) =>
+                    setPublishModalData((prev) =>
+                      prev ? { ...prev, description: e.target.value } : null
+                    )
+                  }
+                  placeholder="Giới thiệu nội dung, trình độ hoặc mẹo ghi nhớ bộ thẻ này cho cộng đồng..."
+                  className="mt-1.5 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setPublishModalData(null)}
+                  className="min-h-[44px] rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={publishingDeckId === activeDeck.id}
+                  className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-60 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 cursor-pointer"
+                >
+                  <UploadCloud className="h-4 w-4" aria-hidden="true" />
+                  <span>
+                    {publishingDeckId === activeDeck.id
+                      ? 'Đang đăng...'
+                      : 'Đăng lên Kho thẻ'}
+                  </span>
                 </button>
               </div>
             </form>

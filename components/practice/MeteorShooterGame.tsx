@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Flag,
-  Heart,
   Rocket,
+  Sparkles,
   Trophy,
   Volume2,
 } from 'lucide-react';
@@ -29,9 +29,10 @@ interface MeteorOrb {
   cardId: string;
   label: string;
   isCorrect: boolean;
-  xPct: number; // 14..86
-  yPct: number; // 4..84
+  xPct: number; // 16..84
+  yPct: number; // 6..84
   speed: number;
+  disabledWrong: boolean;
 }
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -51,7 +52,7 @@ function buildWaveOrbs(card: Flashcard, pool: Flashcard[]): MeteorOrb[] {
   ).slice(0, 3);
   const candidates = shuffleArray([card, ...distractors]);
   const laneOrder = shuffleArray(METEOR_LANES);
-  const startOffsets = shuffleArray([6, 16, 26, 36]);
+  const startOffsets = shuffleArray([6, 15, 24, 33]);
 
   return candidates.map((c, idx) => ({
     uid: `orb_${card.id}_${idx}_${Math.random().toString(36).slice(2, 6)}`,
@@ -60,7 +61,8 @@ function buildWaveOrbs(card: Flashcard, pool: Flashcard[]): MeteorOrb[] {
     isCorrect: c.id === card.id,
     xPct: laneOrder[idx % laneOrder.length],
     yPct: startOffsets[idx % startOffsets.length],
-    speed: 0.24 + idx * 0.03,
+    speed: 0.22 + idx * 0.03,
+    disabledWrong: false,
   }));
 }
 
@@ -76,14 +78,14 @@ export function MeteorShooterGame({
     [allPoolCards, cards]
   );
 
-  const [waveIdx, setWaveIdx] = useState(0);
+  const [waveCount, setWaveCount] = useState(0);
+  const [correctHits, setCorrectHits] = useState(0);
   const [orbs, setOrbs] = useState<MeteorOrb[]>(() =>
     cards[0] ? buildWaveOrbs(cards[0], pool) : []
   );
   const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [maxStreak, setMaxStreak] = useState(0);
-  const [lives, setLives] = useState(3);
   const [results, setResults] = useState<PracticeResultItem[]>([]);
   const [laserTarget, setLaserTarget] = useState<{
     xPct: number;
@@ -91,62 +93,85 @@ export function MeteorShooterGame({
     hitCorrect: boolean;
   } | null>(null);
   const [waveLocked, setWaveLocked] = useState(false);
+  const [statusHint, setStatusHint] = useState<string | null>(null);
 
-  const currentCard = cards[waveIdx];
+  const currentCard = cards[waveCount % Math.max(1, cards.length)];
   const waveLockedRef = useRef(false);
   const completedRef = useRef(false);
+  const hadMissInWaveRef = useRef(false);
+  const scoreRef = useRef(score);
+  const streakRef = useRef(streak);
+  const maxStreakRef = useRef(maxStreak);
+  const resultsRef = useRef(results);
+
+  useEffect(() => {
+    scoreRef.current = score;
+  }, [score]);
+  useEffect(() => {
+    streakRef.current = streak;
+  }, [streak]);
+  useEffect(() => {
+    maxStreakRef.current = maxStreak;
+  }, [maxStreak]);
+  useEffect(() => {
+    resultsRef.current = results;
+  }, [results]);
 
   const finishGame = useCallback(
     (finalResults: PracticeResultItem[], finalScore: number, bestStreak: number) => {
       if (completedRef.current) return;
       completedRef.current = true;
-      onComplete(finalResults, {
+      const normalized =
+        finalResults.length > 0
+          ? finalResults
+          : cards.slice(0, 1).map((c) => ({
+              cardId: c.id,
+              term: c.term,
+              meaning: c.meaning,
+              isCorrect: false,
+            }));
+      onComplete(normalized, {
         score: finalScore,
         leaderboardMode: 'meteor',
         maxStreak: bestStreak,
       });
     },
-    [onComplete]
+    [cards, onComplete]
   );
 
-  const advanceWave = useCallback(
-    (
-      nextResults: PracticeResultItem[],
-      nextScore: number,
-      nextLives: number,
-      nextMaxStreak: number
-    ) => {
-      const nextIdx = waveIdx + 1;
-      if (nextLives <= 0 || nextIdx >= cards.length) {
-        finishGame(nextResults, nextScore, nextMaxStreak);
-        return;
-      }
-      const nextCard = cards[nextIdx];
-      setWaveIdx(nextIdx);
+  const spawnNextWave = useCallback(
+    (nextWaveIndex: number) => {
+      if (completedRef.current || cards.length === 0) return;
+      const nextCard = cards[nextWaveIndex % cards.length];
+      setWaveCount(nextWaveIndex);
       setOrbs(buildWaveOrbs(nextCard, pool));
       setLaserTarget(null);
+      setStatusHint(null);
+      hadMissInWaveRef.current = false;
       waveLockedRef.current = false;
       setWaveLocked(false);
       if (autoSpeak && nextCard) {
         speakEnglish(nextCard.term);
       }
     },
-    [waveIdx, cards, pool, autoSpeak, finishGame]
+    [cards, pool, autoSpeak]
   );
 
-  // Smooth descent timer (~30fps)
+  // Relaxed endless descent timer (~20fps), no lives lost!
   useEffect(() => {
     if (!currentCard || completedRef.current) return;
     const id = window.setInterval(() => {
       if (waveLockedRef.current) return;
       setOrbs((prev) => {
         const next = prev.map((o) => ({ ...o, yPct: o.yPct + o.speed }));
-        const hitBottom = next.some((o) => o.yPct >= 86);
+        const hitBottom = next.some((o) => !o.disabledWrong && o.yPct >= 86);
         if (hitBottom) {
           waveLockedRef.current = true;
           setWaveLocked(true);
-          const updatedResults = [
-            ...results,
+          setStreak(0);
+          setStatusHint('Thiên thạch vừa bay qua — nạp đợt tiếp theo!');
+          const updatedResults: PracticeResultItem[] = [
+            ...resultsRef.current,
             {
               cardId: currentCard.id,
               term: currentCard.term,
@@ -154,97 +179,108 @@ export function MeteorShooterGame({
               isCorrect: false,
             },
           ];
-          const nextLives = lives - 1;
-          setLives(nextLives);
-          setStreak(0);
           setResults(updatedResults);
           window.setTimeout(() => {
-            advanceWave(updatedResults, score, nextLives, maxStreak);
-          }, 750);
+            spawnNextWave(waveCount + 1);
+          }, 700);
         }
         return next;
       });
     }, 55);
     return () => window.clearInterval(id);
-  }, [
-    currentCard,
-    results,
-    lives,
-    score,
-    maxStreak,
-    advanceWave,
-  ]);
+  }, [currentCard, waveCount, spawnNextWave]);
 
   function handleShootOrb(orb: MeteorOrb) {
-    if (waveLockedRef.current || !currentCard || completedRef.current) return;
+    if (
+      waveLockedRef.current ||
+      orb.disabledWrong ||
+      !currentCard ||
+      completedRef.current
+    ) {
+      return;
+    }
+
+    if (!orb.isCorrect) {
+      // Relaxed entertainment mode: no heart loss! Crack wrong orb & let player keep shooting.
+      hadMissInWaveRef.current = true;
+      setStreak(0);
+      setStatusHint('Chưa đúng — bắn thiên thạch khác!');
+      setLaserTarget({
+        xPct: orb.xPct,
+        yPct: orb.yPct,
+        hitCorrect: false,
+      });
+      setOrbs((prev) =>
+        prev.map((o) => (o.uid === orb.uid ? { ...o, disabledWrong: true } : o))
+      );
+      window.setTimeout(() => {
+        setLaserTarget((cur) => (cur && !cur.hitCorrect ? null : cur));
+      }, 280);
+      return;
+    }
+
+    // Correct hit!
     waveLockedRef.current = true;
     setWaveLocked(true);
-
-    const isCorrect = orb.isCorrect;
+    setStatusHint(null);
     setLaserTarget({
       xPct: orb.xPct,
       yPct: orb.yPct,
-      hitCorrect: isCorrect,
+      hitCorrect: true,
     });
 
-    const nextStreak = isCorrect ? streak + 1 : 0;
-    const nextMaxStreak = Math.max(maxStreak, nextStreak);
-    const earned = isCorrect ? 100 + Math.min(nextStreak - 1, 9) * 20 : 0;
-    const nextScore = score + earned;
-    const nextLives = isCorrect ? lives : lives - 1;
+    const cleanHit = !hadMissInWaveRef.current;
+    const nextStreak = cleanHit ? streakRef.current + 1 : 1;
+    const nextMaxStreak = Math.max(maxStreakRef.current, nextStreak);
+    const earned = (cleanHit ? 100 : 50) + Math.min(nextStreak - 1, 9) * 20;
+    const nextScore = scoreRef.current + earned;
 
-    const nextResults = [
-      ...results,
+    const nextResults: PracticeResultItem[] = [
+      ...resultsRef.current,
       {
         cardId: currentCard.id,
         term: currentCard.term,
         meaning: currentCard.meaning,
-        isCorrect,
+        isCorrect: cleanHit,
       },
     ];
 
     setStreak(nextStreak);
     setMaxStreak(nextMaxStreak);
     setScore(nextScore);
-    setLives(nextLives);
+    setCorrectHits((h) => h + 1);
     setResults(nextResults);
 
     window.setTimeout(() => {
-      advanceWave(nextResults, nextScore, nextLives, nextMaxStreak);
-    }, isCorrect ? 460 : 820);
+      spawnNextWave(waveCount + 1);
+    }, 420);
   }
 
   if (!currentCard) return null;
 
   const displayedBest = Math.max(bestScore, score);
-  const progressPct = Math.round(((waveIdx + 1) / Math.max(1, cards.length)) * 100);
+  const deckCyclePos = (waveCount % Math.max(1, cards.length)) + 1;
+  const progressPct = Math.round((deckCyclePos / Math.max(1, cards.length)) * 100);
   const streakSegments = 10;
   const filledSegments = Math.min(streakSegments, streak);
 
   return (
     <div className="mx-auto max-w-xl overflow-hidden rounded-2xl border border-indigo-900/70 bg-[#090d2e] text-white shadow-xl">
-      {/* Top Space HUD */}
+      {/* Top Space HUD (No Heart Limit — Relaxed Arcade Mode) */}
       <div className="flex items-center justify-between gap-2 px-4 py-3">
         <div className="flex items-center gap-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500/20 text-sky-400">
             <Rocket className="h-5 w-5" aria-hidden="true" />
           </div>
-          <div className="flex items-center gap-1" aria-label={`Còn ${lives} lá chắn`}>
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Heart
-                key={i}
-                className={`h-4 w-4 ${
-                  i < lives
-                    ? 'fill-rose-500 text-rose-500'
-                    : 'text-indigo-800'
-                }`}
-                aria-hidden="true"
-              />
-            ))}
+          <div>
+            <div className="font-mono-tabular text-base font-bold leading-none text-white">
+              {score} điểm
+            </div>
+            <div className="mt-0.5 flex items-center gap-1 text-[11px] text-sky-300">
+              <Sparkles className="h-3 w-3" aria-hidden="true" />
+              <span>Đã bắn: {correctHits} · Chơi tự do</span>
+            </div>
           </div>
-          <span className="font-mono-tabular text-sm font-bold text-white">
-            {score} điểm
-          </span>
         </div>
 
         <div className="flex items-center gap-2.5">
@@ -263,10 +299,10 @@ export function MeteorShooterGame({
           <button
             type="button"
             onClick={() => finishGame(results, score, maxStreak)}
-            className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-indigo-700/80 bg-indigo-900/70 px-2 py-1 text-[11px] font-semibold text-indigo-100 hover:bg-indigo-800 cursor-pointer"
+            className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-indigo-700/80 bg-indigo-900/70 px-2.5 py-1 text-xs font-semibold text-indigo-100 hover:bg-indigo-800 cursor-pointer whitespace-nowrap"
           >
-            <Flag className="h-3 w-3" aria-hidden="true" />
-            <span>Dừng</span>
+            <Flag className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Kết thúc & Lưu</span>
           </button>
         </div>
       </div>
@@ -291,6 +327,12 @@ export function MeteorShooterGame({
 
       {/* Space Arena Field */}
       <div className="relative h-[370px] sm:h-[420px] w-full select-none overflow-hidden bg-[radial-gradient(circle_at_50%_20%,#1b1f5c_0%,#090d2e_75%)]">
+        {statusHint && (
+          <div className="pointer-events-none absolute top-2.5 left-1/2 z-20 -translate-x-1/2 rounded-full border border-indigo-500/40 bg-indigo-950/85 px-3 py-1 text-[11px] font-semibold text-amber-300 whitespace-nowrap">
+            {statusHint}
+          </div>
+        )}
+
         {/* Laser Beam */}
         {laserTarget && (
           <svg
@@ -314,33 +356,29 @@ export function MeteorShooterGame({
         {/* Falling Meteor Orbs */}
         {orbs.map((orb) => {
           const isRevealedRight = waveLocked && orb.isCorrect;
-          const isLaserHit =
-            laserTarget &&
-            Math.abs(laserTarget.xPct - orb.xPct) < 1 &&
-            Math.abs(laserTarget.yPct - orb.yPct) < 2;
 
           let orbStyle =
-            'border-indigo-400/50 bg-[radial-gradient(circle_at_35%_30%,#5253ba_0%,#292a73_75%)] text-white shadow-[0_0_20px_rgba(99,102,241,0.35)] hover:scale-105 hover:border-sky-300';
+            'border-indigo-400/50 bg-[radial-gradient(circle_at_35%_30%,#5253ba_0%,#292a73_75%)] text-white shadow-[0_0_20px_rgba(99,102,241,0.35)] hover:scale-105 hover:border-sky-300 cursor-pointer';
           if (isRevealedRight) {
             orbStyle =
               'border-emerald-300 bg-[radial-gradient(circle_at_35%_30%,#34d399_0%,#059669_75%)] text-white shadow-[0_0_24px_rgba(52,211,153,0.65)] scale-105';
-          } else if (isLaserHit && !orb.isCorrect) {
+          } else if (orb.disabledWrong) {
             orbStyle =
-              'border-rose-300 bg-[radial-gradient(circle_at_35%_30%,#fb7185_0%,#e11d48_75%)] text-white shadow-[0_0_24px_rgba(244,63,94,0.65)]';
+              'border-rose-400/60 bg-[radial-gradient(circle_at_35%_30%,#fb7185_0%,#881337_75%)] text-rose-100 opacity-45 scale-90 cursor-not-allowed';
           }
 
           return (
             <button
               key={orb.uid}
               type="button"
-              disabled={waveLocked}
+              disabled={waveLocked || orb.disabledWrong}
               onClick={() => handleShootOrb(orb)}
               style={{
                 left: `${orb.xPct}%`,
                 top: `${orb.yPct}%`,
                 transform: 'translate(-50%, -50%)',
               }}
-              className={`absolute flex h-24 w-24 sm:h-28 sm:w-28 items-center justify-center rounded-full border-2 p-2.5 text-center transition-transform duration-150 cursor-pointer ${orbStyle}`}
+              className={`absolute flex h-24 w-24 sm:h-28 sm:w-28 items-center justify-center rounded-full border-2 p-2.5 text-center transition-transform duration-150 ${orbStyle}`}
             >
               <span className="text-xs sm:text-sm font-bold leading-tight break-words line-clamp-3">
                 {orb.label}
@@ -364,9 +402,9 @@ export function MeteorShooterGame({
         {/* Bottom Left Progress */}
         <div className="pointer-events-none absolute bottom-3 left-3 w-28 sm:w-36">
           <div className="flex items-center justify-between font-mono-tabular text-[11px] font-bold text-indigo-200">
-            <span>{waveIdx + 1}</span>
+            <span>Đợt {waveCount + 1}</span>
             <span>
-              {waveIdx + 1}/{cards.length}
+              {deckCyclePos}/{cards.length}
             </span>
           </div>
           <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-indigo-950/90">

@@ -74,6 +74,7 @@ export function CommunityView({
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishMode, setPublishMode] = useState<'existing' | 'new'>('existing');
   const [sourceDeckId, setSourceDeckId] = useState<string>(myDecks[0]?.id || '');
+  const [existingDesc, setExistingDesc] = useState<string>(myDecks[0]?.description || '');
   const [customTitle, setCustomTitle] = useState('');
   const [customDesc, setCustomDesc] = useState('');
   const [customCategory, setCustomCategory] = useState('Học thuật');
@@ -139,9 +140,15 @@ export function CommunityView({
   }, [activeCommunityDeck, leaderboardEntries]);
 
   function openPublishModal() {
+    if (!user) {
+      onOpenAuth();
+      return;
+    }
     setPublishError(null);
-    setPublishMode(myDecks.length > 0 ? 'existing' : 'new');
-    setSourceDeckId(myDecks[0]?.id || '');
+    const firstDeck = myDecks[0] || null;
+    setPublishMode(firstDeck ? 'existing' : 'new');
+    setSourceDeckId(firstDeck?.id || '');
+    setExistingDesc(firstDeck?.description || '');
     setPublishOpen(true);
   }
 
@@ -149,7 +156,7 @@ export function CommunityView({
     e.preventDefault();
     setPublishError(null);
 
-    if (neonConfigured && !user) {
+    if (!user) {
       setPublishOpen(false);
       onOpenAuth();
       return;
@@ -171,7 +178,7 @@ export function CommunityView({
         const res = await onPublishDeck({
           sourceDeckId: deck.id,
           title: deck.title,
-          description: deck.description,
+          description: existingDesc.trim(),
           category: deck.category,
           cards: deckCards.map((c) => ({
             term: c.term,
@@ -595,9 +602,9 @@ export function CommunityView({
               </button>
             </div>
 
-            {neonConfigured && !user && (
+            {!user && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
-                Bạn cần đăng nhập tài khoản để bộ thẻ được lưu công khai cho mọi người trên Neon.
+                Bạn cần đăng nhập tài khoản để đăng tải bộ thẻ lên Kho thẻ {neonConfigured ? '(lưu công khai trên Neon)' : ''}.
               </div>
             )}
 
@@ -632,41 +639,64 @@ export function CommunityView({
 
             <form onSubmit={handlePublishSubmit} className="mt-4 space-y-3">
               {publishMode === 'existing' ? (
-                <div>
-                  <label
-                    htmlFor="publish-source-deck"
-                    className="block text-xs font-medium text-slate-700 dark:text-slate-300"
-                  >
-                    Chọn bộ thẻ muốn chia sẻ
-                  </label>
-                  <select
-                    id="publish-source-deck"
-                    value={sourceDeckId}
-                    onChange={(e) => setSourceDeckId(e.target.value)}
-                    className="mt-1 min-h-[42px] w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                  >
-                    {myDecks.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.title} ({(myCardsByDeck[d.id] || []).length} thẻ)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
                 <>
                   <div>
-                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
-                      Tiêu đề bộ thẻ
+                    <label
+                      htmlFor="publish-source-deck"
+                      className="block text-xs font-medium text-slate-700 dark:text-slate-300"
+                    >
+                      Chọn bộ thẻ muốn chia sẻ
                     </label>
-                    <input
-                      type="text"
-                      value={customTitle}
-                      onChange={(e) => setCustomTitle(e.target.value)}
-                      placeholder="Ví dụ: 15 từ vựng Công nghệ AI"
-                      className="mt-1 min-h-[40px] w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                    <select
+                      id="publish-source-deck"
+                      value={sourceDeckId}
+                      onChange={(e) => {
+                        const nextId = e.target.value;
+                        setSourceDeckId(nextId);
+                        const found = myDecks.find((d) => d.id === nextId);
+                        setExistingDesc(found?.description || '');
+                      }}
+                      className="mt-1 min-h-[42px] w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                    >
+                      {myDecks.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.title} ({(myCardsByDeck[d.id] || []).length} thẻ)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      htmlFor="publish-existing-desc"
+                      className="block text-xs font-medium text-slate-700 dark:text-slate-300"
+                    >
+                      Mô tả bộ thẻ (hiện cho mọi người trên Kho thẻ)
+                    </label>
+                    <textarea
+                      id="publish-existing-desc"
+                      rows={3}
+                      value={existingDesc}
+                      onChange={(e) => setExistingDesc(e.target.value)}
+                      placeholder="Ví dụ: Bộ từ vựng trọng tâm kèm ví dụ thực tế, phù hợp luyện thi hoặc giao tiếp..."
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-900 focus:border-sky-600 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2.5">
+                </>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                        Tiêu đề bộ thẻ
+                      </label>
+                      <input
+                        type="text"
+                        value={customTitle}
+                        onChange={(e) => setCustomTitle(e.target.value)}
+                        placeholder="Ví dụ: 15 từ vựng Công nghệ AI"
+                        className="mt-1 min-h-[40px] w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+                      />
+                    </div>
                     <div>
                       <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                         Chủ đề
@@ -678,24 +708,25 @@ export function CommunityView({
                         className="mt-1 min-h-[40px] w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
                       />
                     </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
-                        Mô tả ngắn
-                      </label>
-                      <input
-                        type="text"
-                        value={customDesc}
-                        onChange={(e) => setCustomDesc(e.target.value)}
-                        className="mt-1 min-h-[40px] w-full rounded-xl border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
-                      />
-                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                      Mô tả bộ thẻ
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={customDesc}
+                      onChange={(e) => setCustomDesc(e.target.value)}
+                      placeholder="Giới thiệu nội dung, trình độ hoặc mục tiêu của bộ thẻ này..."
+                      className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-sm dark:border-slate-700 dark:bg-slate-950"
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
                       Danh sách thẻ (mỗi dòng: Từ - Nghĩa)
                     </label>
                     <textarea
-                      rows={5}
+                      rows={4}
                       value={customBulkText}
                       onChange={(e) => setCustomBulkText(e.target.value)}
                       placeholder={'Generate - tạo ra\nNegotiate - thương lượng\nPerspective - góc nhìn'}
@@ -726,7 +757,7 @@ export function CommunityView({
                 >
                   {publishing
                     ? 'Đang đăng tải...'
-                    : neonConfigured && !user
+                    : !user
                       ? 'Đăng nhập để đăng tải'
                       : 'Đăng lên Kho thẻ'}
                 </button>

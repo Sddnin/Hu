@@ -204,6 +204,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const userId = await getAuthenticatedUserId();
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Vui lòng đăng nhập tài khoản để ghi danh lên Bảng xếp hạng.' },
+        { status: 401 }
+      );
+    }
     const body = await req.json();
 
     const deckId =
@@ -231,21 +237,20 @@ export async function POST(req: NextRequest) {
     await ensureNeonSchema();
     const db = getDb();
 
-    let playerName =
-      typeof body.playerName === 'string' && body.playerName.trim()
-        ? body.playerName.trim().slice(0, LIMITS.DISPLAY_NAME_MAX)
-        : 'Khách';
+    const [u] = await db
+      .select({ displayName: users.displayName, username: users.username })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
 
-    if (userId) {
-      const [u] = await db
-        .select({ displayName: users.displayName, username: users.username })
-        .from(users)
-        .where(eq(users.id, userId))
-        .limit(1);
-      if (u) {
-        playerName = u.displayName || u.username;
-      }
+    if (!u) {
+      return NextResponse.json(
+        { error: 'Tài khoản không hợp lệ. Vui lòng đăng nhập lại.' },
+        { status: 401 }
+      );
     }
+
+    const playerName = u.displayName || u.username;
 
     const id =
       typeof body.id === 'string' && body.id.trim()

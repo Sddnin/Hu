@@ -140,6 +140,7 @@ export default function HomePage() {
             onToggleStar={store.toggleCardStar}
             onPublishDeckToCommunity={store.publishDeckToCommunity}
             onGoToCommunity={() => setActiveView('community')}
+            onOpenAuth={() => setAuthModalOpen(true)}
           />
         ) : activeView === 'community' ? (
           <CommunityView
@@ -159,6 +160,7 @@ export default function HomePage() {
           />
         ) : activeView === 'practice' ? (
           <PracticeArena
+            user={store.user}
             decks={store.decks}
             allCards={store.cards}
             cardsByDeck={store.cardsByDeck}
@@ -172,6 +174,7 @@ export default function HomePage() {
             onToggleStar={store.toggleCardStar}
             onRecordResults={store.recordPracticeResults}
             onSubmitLeaderboardScore={store.submitLeaderboardScore}
+            onOpenAuth={() => setAuthModalOpen(true)}
             onViewLeaderboard={() => setActiveView('leaderboard')}
             onBackToDecks={() => setActiveView('decks')}
           />

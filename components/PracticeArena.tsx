@@ -15,6 +15,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  AuthUser,
   Deck,
   Flashcard,
   LEADERBOARD_MODE_LABELS,
@@ -33,9 +34,15 @@ import { QuizMode } from './practice/QuizMode';
 import { SpellMode } from './practice/SpellMode';
 import { TestMode } from './practice/TestMode';
 
-export type PracticePoolFilter = 'all' | 'unmastered' | 'starred' | 'weak';
+export type PracticePoolFilter =
+  | 'all'
+  | 'priority'
+  | 'unmastered'
+  | 'starred'
+  | 'weak';
 
 interface PracticeArenaProps {
+  user: AuthUser | null;
   decks: Deck[];
   allCards: Flashcard[];
   cardsByDeck: Record<string, Flashcard[]>;
@@ -64,6 +71,7 @@ interface PracticeArenaProps {
     durationSeconds: number;
     streak?: number;
   }) => Promise<void>;
+  onOpenAuth: () => void;
   onViewLeaderboard: () => void;
   onBackToDecks: () => void;
 }
@@ -123,6 +131,7 @@ function formatDuration(sec: number): string {
 }
 
 export function PracticeArena({
+  user,
   decks,
   allCards,
   cardsByDeck,
@@ -136,6 +145,7 @@ export function PracticeArena({
   onToggleStar,
   onRecordResults,
   onSubmitLeaderboardScore,
+  onOpenAuth,
   onViewLeaderboard,
   onBackToDecks,
 }: PracticeArenaProps) {
@@ -165,6 +175,7 @@ export function PracticeArena({
     durationSeconds: number;
     score: number;
     leaderboardMode: LeaderboardMode;
+    leaderboardSaved: boolean;
     saved: boolean;
   } | null>(null);
 
@@ -179,7 +190,18 @@ export function PracticeArena({
     }
 
     let filtered = deckCards;
-    if (poolFilter === 'unmastered') {
+    if (poolFilter === 'priority') {
+      const highPriority = deckCards.filter(
+        (c) =>
+          c.mastery !== 'mastered' ||
+          c.starred ||
+          (c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7)
+      );
+      if (highPriority.length > 0) {
+        filtered = highPriority;
+      }
+      return smartShuffleCards(filtered, shuffleSeed || 1);
+    } else if (poolFilter === 'unmastered') {
       const unm = deckCards.filter((c) => c.mastery !== 'mastered');
       if (unm.length > 0) filtered = unm;
     } else if (poolFilter === 'starred') {
@@ -274,6 +296,8 @@ export function PracticeArena({
       Math.max(0, correctCount * 100 + accuracy - Math.min(180, duration));
     const lbMode: LeaderboardMode = meta?.leaderboardMode ?? activeMode;
 
+    const canSubmitLeaderboard = Boolean(user);
+
     setSummary({
       results,
       correctCount,
@@ -282,10 +306,11 @@ export function PracticeArena({
       durationSeconds: duration,
       score: finalScore,
       leaderboardMode: lbMode,
+      leaderboardSaved: canSubmitLeaderboard,
       saved: false,
     });
 
-    await Promise.all([
+    const tasks: Array<Promise<void>> = [
       onRecordResults({
         deck: activeDeck,
         mode: activeMode,
@@ -294,16 +319,23 @@ export function PracticeArena({
         correctCount,
         durationSeconds: duration,
       }),
-      onSubmitLeaderboardScore({
-        deckId: activeDeck.id,
-        deckTitle: activeDeck.title,
-        mode: lbMode,
-        score: finalScore,
-        accuracy,
-        durationSeconds: duration,
-        streak: meta?.maxStreak ?? 0,
-      }),
-    ]);
+    ];
+
+    if (canSubmitLeaderboard) {
+      tasks.push(
+        onSubmitLeaderboardScore({
+          deckId: activeDeck.id,
+          deckTitle: activeDeck.title,
+          mode: lbMode,
+          score: finalScore,
+          accuracy,
+          durationSeconds: duration,
+          streak: meta?.maxStreak ?? 0,
+        })
+      );
+    }
+
+    await Promise.all(tasks);
 
     setSummary((prev) => (prev ? { ...prev, saved: true } : null));
   }
@@ -459,6 +491,7 @@ export function PracticeArena({
               className="min-h-[38px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
             >
               <option value="all">Tất cả thẻ ({deckCards.length})</option>
+              <option value="priority">Thẻ ưu tiên cao</option>
               <option value="unmastered">Chỉ thẻ chưa thuộc</option>
               <option value="starred" disabled={starredTotal === 0}>
                 Chỉ thẻ gắn sao ({starredTotal})
@@ -657,10 +690,27 @@ export function PracticeArena({
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
               {activeDeck.title} · {LEADERBOARD_MODE_LABELS[summary.leaderboardMode]} ·{' '}
               {summary.saved
-                ? 'Đã lưu vào Lịch sử & Bảng xếp hạng'
+                ? summary.leaderboardSaved
+                  ? 'Đã lưu vào Lịch sử & Bảng xếp hạng'
+                  : 'Đã lưu vào Lịch sử cá nhân (Khách)'
                 : 'Đang lưu kết quả...'}
             </p>
           </div>
+
+          {!summary.leaderboardSaved && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+              <span>
+                Chỉ tài khoản đã đăng nhập mới được ghi danh lên Bảng xếp hạng.
+              </span>
+              <button
+                type="button"
+                onClick={onOpenAuth}
+                className="font-semibold text-sky-700 underline hover:no-underline dark:text-sky-400 cursor-pointer whitespace-nowrap"
+              >
+                Đăng nhập ngay
+              </button>
+            </div>
+          )}
 
           <div className="mt-6 grid grid-cols-2 gap-3 border-y border-slate-200 py-5 dark:border-slate-800 sm:grid-cols-4">
             <div className="text-center">

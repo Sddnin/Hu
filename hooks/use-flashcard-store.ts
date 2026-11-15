@@ -1322,6 +1322,13 @@ export function useFlashcardStore() {
       category: string;
       cards: CommunityCardItem[];
     }): Promise<{ ok: boolean; error?: string; deck?: CommunityDeck }> => {
+      if (!user) {
+        return {
+          ok: false,
+          error: 'Bạn cần đăng nhập tài khoản để đăng tải bộ thẻ lên Kho thẻ.',
+        };
+      }
+
       const title = clampString(input.title, LIMITS.TITLE_MAX);
       const description = clampString(input.description, LIMITS.DESC_MAX);
       const category =
@@ -1336,7 +1343,7 @@ export function useFlashcardStore() {
         };
       }
 
-      if (user && neonConfigured && (typeof navigator === 'undefined' || navigator.onLine)) {
+      if (neonConfigured && (typeof navigator === 'undefined' || navigator.onLine)) {
         try {
           const res = await fetch('/api/community', {
             method: 'POST',
@@ -1361,7 +1368,7 @@ export function useFlashcardStore() {
           }
           return { ok: true, deck: data.deck };
         } catch {
-          // Fallback to local publish below if network drops
+          // Fallback to local publish below if logged-in user is offline
         }
       }
 
@@ -1369,8 +1376,8 @@ export function useFlashcardStore() {
       const localDeck: CommunityDeck = {
         id: createUniqueId('comm'),
         sourceDeckId: input.sourceDeckId ?? null,
-        authorId: user?.id || 'local',
-        authorName: user?.displayName || user?.username || 'Bạn (Trên máy)',
+        authorId: user.id,
+        authorName: user.displayName || user.username,
         title,
         description,
         category,
@@ -1479,16 +1486,20 @@ export function useFlashcardStore() {
       streak?: number;
       playerName?: string;
     }) => {
+      if (!user) {
+        return;
+      }
+
       const id = createUniqueId('lb');
       const playerName =
-        user?.displayName ||
-        user?.username ||
+        user.displayName ||
+        user.username ||
         input.playerName?.trim() ||
-        'Bạn (Khách)';
+        'Thành viên';
 
       const entry: LeaderboardEntry = {
         id,
-        userId: user?.id ?? null,
+        userId: user.id,
         playerName,
         deckId: input.deckId,
         deckTitle: input.deckTitle,
