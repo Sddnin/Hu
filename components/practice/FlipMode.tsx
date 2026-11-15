@@ -25,11 +25,17 @@ export interface PracticeResultItem {
 
 interface FlipModeProps {
   cards: Flashcard[];
+  autoSpeak?: boolean;
   onToggleStar: (card: Flashcard) => Promise<void>;
   onComplete: (results: PracticeResultItem[]) => void;
 }
 
-export function FlipMode({ cards, onToggleStar, onComplete }: FlipModeProps) {
+export function FlipMode({
+  cards,
+  autoSpeak = false,
+  onToggleStar,
+  onComplete,
+}: FlipModeProps) {
   const [index, setIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [frontSide, setFrontSide] = useState<'en' | 'vi'>('en');
@@ -109,6 +115,16 @@ export function FlipMode({ cards, onToggleStar, onComplete }: FlipModeProps) {
     }, 2400);
     return () => window.clearTimeout(nextTimer);
   }, [autoplay, isFlipped, index, total, current, frontSide]);
+
+  // Auto-speak when changing cards manually if autoSpeak is enabled
+  useEffect(() => {
+    if (!autoSpeak || autoplay || !current) return;
+    if (frontSide === 'en' && !isFlipped) {
+      speakEnglish(current.term);
+    } else if (frontSide === 'vi' && isFlipped) {
+      speakEnglish(current.term);
+    }
+  }, [autoSpeak, autoplay, current, frontSide, isFlipped]);
 
   // Desktop keyboard shortcuts
   useEffect(() => {

@@ -1,22 +1,49 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { AccountModal, AccountTab } from '@/components/AccountModal';
 import { AuthModal } from '@/components/AuthModal';
 import { DecksView } from '@/components/DecksView';
 import { Header } from '@/components/Header';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
-import { PracticeArena } from '@/components/PracticeArena';
+import { PracticeArena, PracticePoolFilter } from '@/components/PracticeArena';
 import { ProgressView } from '@/components/ProgressView';
 import { WorkspaceToolbar } from '@/components/WorkspaceToolbar';
 import { useFlashcardStore } from '@/hooks/use-flashcard-store';
-import { AppView, PracticeMode, getTodayDateKey } from '@/lib/types';
+import { AppView, PracticeMode, StudySession, getTodayDateKey } from '@/lib/types';
+
+function computeStreakDays(sessions: StudySession[]): number {
+  if (sessions.length === 0) return 0;
+  const activeDates = new Set(sessions.map((s) => s.dateKey));
+  let streak = 0;
+  const cursor = new Date();
+  const todayKey = getTodayDateKey(cursor);
+  if (!activeDates.has(todayKey)) {
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  for (let i = 0; i < 365; i++) {
+    const key = getTodayDateKey(cursor);
+    if (activeDates.has(key)) {
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
 
 export default function HomePage() {
   const store = useFlashcardStore();
   const [activeView, setActiveView] = useState<AppView>('decks');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('');
   const [activeMode, setActiveMode] = useState<PracticeMode>('flip');
+  const [poolFilter, setPoolFilter] = useState<PracticePoolFilter>('all');
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [accountModalState, setAccountModalState] = useState<{
+    open: boolean;
+    tab: AccountTab;
+  }>({ open: false, tab: 'profile' });
 
   const effectiveSelectedDeckId = useMemo(() => {
     if (store.decks.length === 0) return '';
@@ -35,9 +62,19 @@ export default function HomePage() {
     [store.sessions, todayKey]
   );
 
-  function handleStartPractice(deckId: string, mode: PracticeMode) {
+  const streakDays = useMemo(
+    () => computeStreakDays(store.sessions),
+    [store.sessions]
+  );
+
+  function handleStartPractice(
+    deckId: string,
+    mode: PracticeMode,
+    filter: PracticePoolFilter = 'all'
+  ) {
     setSelectedDeckId(deckId);
     setActiveMode(mode);
+    setPoolFilter(filter);
     setActiveView('practice');
   }
 
@@ -45,6 +82,7 @@ export default function HomePage() {
     if (effectiveSelectedDeckId) {
       setSelectedDeckId(effectiveSelectedDeckId);
     }
+    setPoolFilter('all');
     setActiveView('practice');
   }
 
@@ -53,6 +91,7 @@ export default function HomePage() {
       setSelectedDeckId(effectiveSelectedDeckId);
     }
     setActiveMode('test');
+    setPoolFilter('all');
     setActiveView('practice');
   }
 
@@ -72,12 +111,11 @@ export default function HomePage() {
         syncing={store.syncing}
         syncError={store.syncError}
         onOpenAuth={() => setAuthModalOpen(true)}
+        onOpenAccount={(tab) => setAccountModalState({ open: true, tab })}
         onSignOut={store.signOutUser}
-        decks={store.decks}
-        selectedDeckId={effectiveSelectedDeckId}
-        onSelectDeck={setSelectedDeckId}
         todayReviewedCount={todayReviewedCount}
         dailyGoal={store.dailyGoal}
+        streakDays={streakDays}
       />
 
       <main className="flex-1">
@@ -91,6 +129,7 @@ export default function HomePage() {
           </div>
         ) : activeView === 'decks' ? (
           <DecksView
+            user={store.user}
             decks={store.decks}
             cardsByDeck={store.cardsByDeck}
             selectedDeckId={effectiveSelectedDeckId}
@@ -99,6 +138,7 @@ export default function HomePage() {
             onCreateDeck={store.createDeck}
             onUpdateDeck={store.updateDeck}
             onDeleteDeck={store.deleteDeck}
+            onResetDeck={store.resetDeckProgress}
             onDuplicateDeck={store.duplicateDeck}
             onAddCard={store.addCard}
             onBulkAddCards={store.bulkAddCards}
@@ -115,6 +155,8 @@ export default function HomePage() {
             onSelectDeck={setSelectedDeckId}
             activeMode={activeMode}
             onChangeMode={setActiveMode}
+            poolFilter={poolFilter}
+            onChangePoolFilter={setPoolFilter}
             onToggleStar={store.toggleCardStar}
             onRecordResults={store.recordPracticeResults}
             onViewProgress={() => setActiveView('progress')}
@@ -128,6 +170,7 @@ export default function HomePage() {
             dailyGoal={store.dailyGoal}
             onUpdateDailyGoal={store.updateDailyGoal}
             onDeleteSession={store.deleteStudySession}
+            onToggleStar={store.toggleCardStar}
             onStartPractice={handleStartPractice}
           />
         )}
@@ -154,6 +197,22 @@ export default function HomePage() {
         onLogin={store.loginWithPassword}
         onRegister={store.registerWithPassword}
       />
+
+      {store.user && (
+        <AccountModal
+          key={`${store.user.id}_${accountModalState.tab}_${accountModalState.open}`}
+          open={accountModalState.open}
+          initialTab={accountModalState.tab}
+          user={store.user}
+          decks={store.decks}
+          cardsByDeck={store.cardsByDeck}
+          onClose={() =>
+            setAccountModalState((prev) => ({ ...prev, open: false }))
+          }
+          onUpdateProfile={store.updateProfile}
+          onImportBackup={store.importBackupDecks}
+        />
+      )}
     </div>
   );
 }

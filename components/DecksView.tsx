@@ -10,14 +10,17 @@ import {
   Layers,
   Pencil,
   Plus,
+  RotateCcw,
   Search,
   Star,
   Trash2,
   Volume2,
   X,
 } from 'lucide-react';
+import { PracticePoolFilter } from '@/components/PracticeArena';
 import { speakEnglish } from '@/lib/speech';
 import {
+  AuthUser,
   Deck,
   Flashcard,
   LIMITS,
@@ -27,11 +30,16 @@ import {
 } from '@/lib/types';
 
 interface DecksViewProps {
+  user: AuthUser | null;
   decks: Deck[];
   cardsByDeck: Record<string, Flashcard[]>;
   selectedDeckId: string;
   onSelectDeck: (deckId: string) => void;
-  onStartPractice: (deckId: string, mode: PracticeMode) => void;
+  onStartPractice: (
+    deckId: string,
+    mode: PracticeMode,
+    filter?: PracticePoolFilter
+  ) => void;
   onCreateDeck: (input: {
     title: string;
     description: string;
@@ -42,6 +50,7 @@ interface DecksViewProps {
     input: { title: string; description: string; category: string }
   ) => Promise<void>;
   onDeleteDeck: (deckId: string) => Promise<void>;
+  onResetDeck: (deckId: string) => Promise<void>;
   onDuplicateDeck: (deckId: string) => Promise<string | null>;
   onAddCard: (
     deckId: string,
@@ -78,6 +87,7 @@ interface DecksViewProps {
 }
 
 export function DecksView({
+  user,
   decks,
   cardsByDeck,
   selectedDeckId,
@@ -86,6 +96,7 @@ export function DecksView({
   onCreateDeck,
   onUpdateDeck,
   onDeleteDeck,
+  onResetDeck,
   onDuplicateDeck,
   onAddCard,
   onBulkAddCards,
@@ -103,7 +114,7 @@ export function DecksView({
   // Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [masteryFilter, setMasteryFilter] = useState<
-    'all' | MasteryLevel | 'starred'
+    'all' | MasteryLevel | 'starred' | 'weak'
   >('all');
 
   // Deck Modal state
@@ -114,6 +125,9 @@ export function DecksView({
   const [deckDesc, setDeckDesc] = useState('');
   const [deckCategory, setDeckCategory] = useState('Học thuật');
   const [confirmDeleteDeckId, setConfirmDeleteDeckId] = useState<string | null>(
+    null
+  );
+  const [confirmResetDeckId, setConfirmResetDeckId] = useState<string | null>(
     null
   );
 
@@ -136,6 +150,13 @@ export function DecksView({
     return activeCards.filter((card) => {
       if (masteryFilter === 'starred') {
         if (!card.starred) return false;
+      } else if (masteryFilter === 'weak') {
+        if (
+          card.reviewCount === 0 ||
+          card.correctCount / card.reviewCount >= 0.7
+        ) {
+          return false;
+        }
       } else if (masteryFilter !== 'all' && card.mastery !== masteryFilter) {
         return false;
       }
@@ -291,13 +312,21 @@ export function DecksView({
   const totalCards = decks.reduce((sum, d) => sum + d.cardCount, 0);
   const totalMastered = decks.reduce((sum, d) => sum + d.masteredCount, 0);
   const starredCount = activeCards.filter((c) => c.starred).length;
+  const weakCount = activeCards.filter(
+    (c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7
+  ).length;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
       {/* Page Header */}
       <div className="mb-6 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl text-balance">
+          {user && (
+            <p className="text-xs font-medium text-sky-600 dark:text-sky-400">
+              Xin chào, {user.displayName} · @{user.username}
+            </p>
+          )}
+          <h1 className="mt-0.5 font-display text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl text-balance">
             Thư viện Bộ thẻ Từ vựng
           </h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
@@ -483,6 +512,45 @@ export function DecksView({
                       <span className="hidden sm:inline">Xuất TXT</span>
                     </button>
 
+                    {activeCards.length > 0 && (
+                      <>
+                        {confirmResetDeckId === activeDeck.id ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await onResetDeck(activeDeck.id);
+                                setConfirmResetDeckId(null);
+                              }}
+                              className="min-h-[38px] rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 cursor-pointer whitespace-nowrap"
+                            >
+                              Đặt lại tiến độ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmResetDeckId(null)}
+                              className="min-h-[38px] rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 cursor-pointer"
+                            >
+                              Hủy
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmDeleteDeckId(null);
+                              setConfirmResetDeckId(activeDeck.id);
+                            }}
+                            title="Đặt lại tiến độ bộ thẻ về Mới"
+                            className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span className="hidden sm:inline">Đặt lại</span>
+                          </button>
+                        )}
+                      </>
+                    )}
+
                     {decks.length > 1 && (
                       <>
                         {confirmDeleteDeckId === activeDeck.id ? (
@@ -508,7 +576,10 @@ export function DecksView({
                         ) : (
                           <button
                             type="button"
-                            onClick={() => setConfirmDeleteDeckId(activeDeck.id)}
+                            onClick={() => {
+                              setConfirmResetDeckId(null);
+                              setConfirmDeleteDeckId(activeDeck.id);
+                            }}
                             aria-label="Xóa bộ thẻ"
                             className="inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 dark:border-slate-700 dark:text-slate-400 dark:hover:border-red-900 dark:hover:bg-red-950/40 dark:hover:text-red-400 cursor-pointer"
                           >
@@ -594,30 +665,60 @@ export function DecksView({
                   </div>
                 </div>
 
-                {/* Filter Segmented Strip (Scrollable on small mobile) */}
-                <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-950">
-                  {(
-                    [
-                      { id: 'all', label: `Tất cả (${activeCards.length})` },
-                      { id: 'new', label: 'Mới' },
-                      { id: 'learning', label: 'Đang học' },
-                      { id: 'mastered', label: 'Đã thuộc' },
-                      { id: 'starred', label: `Gắn sao (${starredCount})` },
-                    ] as const
-                  ).map((f) => (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => setMasteryFilter(f.id)}
-                      className={`min-h-[34px] rounded-lg px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                        masteryFilter === f.id
-                          ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-800 dark:text-slate-100'
-                          : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
-                      }`}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
+                {/* Filter Segmented Strip & Quick Filtered Review */}
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-950">
+                    {(
+                      [
+                        { id: 'all', label: `Tất cả (${activeCards.length})` },
+                        { id: 'new', label: 'Mới' },
+                        { id: 'learning', label: 'Đang học' },
+                        { id: 'mastered', label: 'Đã thuộc' },
+                        { id: 'starred', label: `Gắn sao (${starredCount})` },
+                        { id: 'weak', label: `Hay sai (${weakCount})` },
+                      ] as const
+                    ).map((f) => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setMasteryFilter(f.id)}
+                        className={`min-h-[34px] rounded-lg px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                          masteryFilter === f.id
+                            ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-800 dark:text-slate-100'
+                            : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {(starredCount > 0 || weakCount > 0) && (
+                    <div className="flex items-center gap-3 text-xs shrink-0">
+                      {starredCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onStartPractice(activeDeck.id, 'flip', 'starred')
+                          }
+                          className="font-semibold text-amber-600 hover:underline dark:text-amber-400 whitespace-nowrap cursor-pointer"
+                        >
+                          Ôn {starredCount} từ gắn sao
+                        </button>
+                      )}
+                      {weakCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onStartPractice(activeDeck.id, 'learn', 'weak')
+                          }
+                          className="font-semibold text-sky-600 hover:underline dark:text-sky-400 whitespace-nowrap cursor-pointer"
+                        >
+                          Ôn {weakCount} từ hay sai
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -660,6 +761,11 @@ export function DecksView({
                         >
                           {MASTERY_LABELS[card.mastery]}
                         </span>
+                        {card.reviewCount > 0 && (
+                          <span className="font-mono-tabular text-xs text-slate-400 dark:text-slate-500">
+                            · {Math.round((card.correctCount / card.reviewCount) * 100)}% đúng
+                          </span>
+                        )}
                       </div>
 
                       <p className="mt-1 text-sm font-medium text-slate-700 dark:text-slate-200">

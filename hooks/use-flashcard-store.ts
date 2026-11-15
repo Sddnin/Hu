@@ -965,6 +965,8 @@ export function useFlashcardStore() {
           });
           if (!res.ok) {
             setSyncError('Không thể lưu mục tiêu lên Neon.');
+          } else {
+            setUser((prev) => (prev ? { ...prev, dailyGoal: clamped } : null));
           }
         } catch {
           setSyncError('Mất kết nối khi lưu mục tiêu.');
@@ -972,6 +974,127 @@ export function useFlashcardStore() {
       }
     },
     [user]
+  );
+
+  const updateProfile = useCallback(
+    async (input: {
+      displayName?: string;
+      dailyGoal?: number;
+      currentPassword?: string;
+      newPassword?: string;
+    }): Promise<AuthActionResult> => {
+      if (!user) {
+        return { ok: false, error: 'Bạn chưa đăng nhập tài khoản.' };
+      }
+
+      setSyncing(true);
+      setSyncError(null);
+      try {
+        const res = await fetch('/api/profile', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return {
+            ok: false,
+            error: data.error || 'Không thể cập nhật tài khoản.',
+          };
+        }
+        if (data.user) {
+          setUser(data.user);
+          if (typeof data.user.dailyGoal === 'number') {
+            setDailyGoal(data.user.dailyGoal);
+          }
+        }
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Mất kết nối tới máy chủ.' };
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [user]
+  );
+
+  const resetDeckProgress = useCallback(
+    async (deckId: string) => {
+      const now = Date.now();
+      setCards((prev) =>
+        prev.map((c) =>
+          c.deckId === deckId
+            ? {
+                ...c,
+                mastery: 'new',
+                reviewCount: 0,
+                correctCount: 0,
+                updatedAt: now,
+              }
+            : c
+        )
+      );
+      setDecks((prev) =>
+        prev.map((d) =>
+          d.id === deckId ? { ...d, masteredCount: 0, updatedAt: now } : d
+        )
+      );
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
+        try {
+          const res = await fetch(
+            `/api/decks/${encodeURIComponent(deckId)}/reset`,
+            { method: 'POST' }
+          );
+          if (!res.ok) {
+            setSyncError('Không thể đặt lại tiến độ trên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi đặt lại tiến độ.');
+        } finally {
+          setSyncing(false);
+        }
+      }
+    },
+    [user]
+  );
+
+  const importBackupDecks = useCallback(
+    async (
+      imported: Array<{
+        title: string;
+        description?: string;
+        category?: string;
+        cards: Array<{
+          term: string;
+          meaning: string;
+          phonetic?: string;
+          partOfSpeech?: string;
+          example?: string;
+        }>;
+      }>
+    ): Promise<number> => {
+      let importedDecksCount = 0;
+      for (const item of imported.slice(0, 20)) {
+        if (!item.title?.trim()) continue;
+        const deckId = await createDeck({
+          title: item.title,
+          description: item.description || '',
+          category: item.category || 'Khôi phục',
+        });
+        const validCards = (item.cards || []).filter(
+          (c) => c.term?.trim() && c.meaning?.trim()
+        );
+        if (validCards.length > 0) {
+          await bulkAddCards(deckId, validCards);
+        }
+        importedDecksCount += 1;
+      }
+      return importedDecksCount;
+    },
+    [createDeck, bulkAddCards]
   );
 
   return {
@@ -985,6 +1108,7 @@ export function useFlashcardStore() {
     loginWithPassword,
     registerWithPassword,
     signOutUser,
+    updateProfile,
     decks,
     cards,
     cardsByDeck,
@@ -994,6 +1118,8 @@ export function useFlashcardStore() {
     createDeck,
     updateDeck,
     deleteDeck,
+    resetDeckProgress,
+    importBackupDecks,
     addCard,
     bulkAddCards,
     updateCard,

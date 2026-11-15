@@ -3,7 +3,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ensureNeonSchema, getDb, isNeonConfigured } from '@/db';
 import { mapUserRow } from '@/db/queries';
 import { users } from '@/db/schema';
-import { getAuthenticatedUserId } from '@/lib/auth';
+import {
+  getAuthenticatedUserId,
+  hashPassword,
+  validatePassword,
+  verifyPassword,
+} from '@/lib/auth';
 import { LIMITS } from '@/lib/types';
 
 export async function PATCH(req: NextRequest) {
@@ -18,6 +23,22 @@ export async function PATCH(req: NextRequest) {
 
   try {
     const body = await req.json();
+    await ensureNeonSchema();
+    const db = getDb();
+
+    const [existing] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!existing) {
+      return NextResponse.json(
+        { error: 'Không tìm thấy tài khoản.' },
+        { status: 404 }
+      );
+    }
+
     const patch: Partial<typeof users.$inferInsert> = {
       updatedAt: Date.now(),
     };
@@ -34,13 +55,40 @@ export async function PATCH(req: NextRequest) {
 
     if (typeof body.displayName === 'string') {
       const cleaned = body.displayName.trim().slice(0, LIMITS.DISPLAY_NAME_MAX);
-      if (cleaned) {
-        patch.displayName = cleaned;
+      if (!cleaned) {
+        return NextResponse.json(
+          { error: 'Tên hiển thị không được để trống.' },
+          { status: 400 }
+        );
       }
+      patch.displayName = cleaned;
     }
 
-    await ensureNeonSchema();
-    const db = getDb();
+    if (typeof body.newPassword === 'string' && body.newPassword.length > 0) {
+      const currentPassword =
+        typeof body.currentPassword === 'string' ? body.currentPassword : '';
+      if (!currentPassword) {
+        return NextResponse.json(
+          { error: 'Vui lòng nhập mật khẩu hiện tại.' },
+          { status: 400 }
+        );
+      }
+      const validCurrent = await verifyPassword(
+        currentPassword,
+        existing.passwordHash
+      );
+      if (!validCurrent) {
+        return NextResponse.json(
+          { error: 'Mật khẩu hiện tại không chính xác.' },
+          { status: 401 }
+        );
+      }
+      const passCheck = validatePassword(body.newPassword);
+      if (!passCheck.ok) {
+        return NextResponse.json({ error: passCheck.error }, { status: 400 });
+      }
+      patch.passwordHash = await hashPassword(body.newPassword);
+    }
 
     const [updated] = await db
       .update(users)
@@ -48,18 +96,11 @@ export async function PATCH(req: NextRequest) {
       .where(eq(users.id, userId))
       .returning();
 
-    if (!updated) {
-      return NextResponse.json(
-        { error: 'Không tìm thấy tài khoản.' },
-        { status: 404 }
-      );
-    }
-
     return NextResponse.json({ user: mapUserRow(updated) });
   } catch (error) {
     console.error('PATCH /api/profile error:', error);
     return NextResponse.json(
-      { error: 'Không thể cập nhật hồ sơ.' },
+      { error: 'Không thể cập nhật tài khoản.' },
       { status: 500 }
     );
   }

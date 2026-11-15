@@ -9,6 +9,7 @@ import { PracticeResultItem } from './FlipMode';
 interface QuizModeProps {
   cards: Flashcard[];
   allPoolCards: Flashcard[];
+  autoSpeak?: boolean;
   onComplete: (results: PracticeResultItem[]) => void;
 }
 
@@ -29,7 +30,12 @@ function shuffleArray<T>(arr: T[]): T[] {
   return copy;
 }
 
-export function QuizMode({ cards, allPoolCards, onComplete }: QuizModeProps) {
+export function QuizMode({
+  cards,
+  allPoolCards,
+  autoSpeak = false,
+  onComplete,
+}: QuizModeProps) {
   const [direction, setDirection] = useState<'en-vi' | 'vi-en'>('en-vi');
   const [index, setIndex] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -100,6 +106,11 @@ export function QuizMode({ cards, allPoolCards, onComplete }: QuizModeProps) {
     setResults([]);
     setStreak(0);
   }
+
+  useEffect(() => {
+    if (!autoSpeak || !current || direction !== 'en-vi' || isAnswered) return;
+    speakEnglish(current.card.term);
+  }, [autoSpeak, current, direction, isAnswered]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {

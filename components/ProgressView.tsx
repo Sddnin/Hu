@@ -1,7 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Star, Trash2, Volume2 } from 'lucide-react';
+import { PracticePoolFilter } from '@/components/PracticeArena';
+import { speakEnglish } from '@/lib/speech';
 import {
   Deck,
   Flashcard,
@@ -19,7 +21,12 @@ interface ProgressViewProps {
   dailyGoal: number;
   onUpdateDailyGoal: (goal: number) => Promise<void>;
   onDeleteSession: (sessionId: string) => Promise<void>;
-  onStartPractice: (deckId: string, mode: PracticeMode) => void;
+  onToggleStar: (card: Flashcard) => Promise<void>;
+  onStartPractice: (
+    deckId: string,
+    mode: PracticeMode,
+    filter?: PracticePoolFilter
+  ) => void;
 }
 
 function formatDuration(sec: number): string {
@@ -72,6 +79,7 @@ export function ProgressView({
   dailyGoal,
   onUpdateDailyGoal,
   onDeleteSession,
+  onToggleStar,
   onStartPractice,
 }: ProgressViewProps) {
   const [modeFilter, setModeFilter] = useState<'all' | PracticeMode>('all');
@@ -141,6 +149,24 @@ export function ProgressView({
     if (modeFilter === 'all') return sessions;
     return sessions.filter((s) => s.mode === modeFilter);
   }, [sessions, modeFilter]);
+
+  const deckTitleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const d of decks) map.set(d.id, d.title);
+    return map;
+  }, [decks]);
+
+  const weakWords = useMemo(() => {
+    return cards
+      .filter((c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.8)
+      .map((c) => ({
+        card: c,
+        accuracy: Math.round((c.correctCount / c.reviewCount) * 100),
+        deckTitle: deckTitleMap.get(c.deckId) || 'Bộ thẻ',
+      }))
+      .sort((a, b) => a.accuracy - b.accuracy || b.card.reviewCount - a.card.reviewCount)
+      .slice(0, 8);
+  }, [cards, deckTitleMap]);
 
   const goalPct = Math.min(100, Math.round((todayReviewed / dailyGoal) * 100));
 
@@ -358,6 +384,92 @@ export function ProgressView({
           </div>
         </section>
       </div>
+
+      {/* Weak Words Notebook */}
+      {weakWords.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-display text-lg font-bold text-slate-900 dark:text-slate-100">
+                Sổ tay từ hay sai cần ôn tập
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                Tổng hợp các từ có tỉ lệ trả lời đúng dưới 80% qua các phiên học.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 divide-y divide-slate-200 dark:divide-slate-800">
+            {weakWords.map(({ card, accuracy, deckTitle }) => (
+              <div
+                key={card.id}
+                className="flex flex-col gap-2.5 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <span className="font-display text-sm font-bold text-slate-900 dark:text-slate-100">
+                      {card.term}
+                    </span>
+                    {card.phonetic && (
+                      <span className="font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
+                        {card.phonetic}
+                      </span>
+                    )}
+                    <span
+                      aria-hidden="true"
+                      className="text-slate-300 dark:text-slate-700"
+                    >
+                      ·
+                    </span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      {deckTitle}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-700 dark:text-slate-300">
+                    {card.meaning}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="font-mono-tabular text-xs font-semibold text-amber-600 dark:text-amber-400">
+                    {card.correctCount}/{card.reviewCount} ({accuracy}%)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => speakEnglish(card.term)}
+                    aria-label={`Nghe phát âm ${card.term}`}
+                    className="inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-sky-600 dark:text-slate-400 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    <Volume2 className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onToggleStar(card)}
+                    aria-label={card.starred ? 'Bỏ gắn sao' : 'Gắn sao'}
+                    className={`inline-flex min-h-[38px] min-w-[38px] items-center justify-center rounded-lg cursor-pointer ${
+                      card.starred
+                        ? 'text-amber-500 dark:text-amber-400'
+                        : 'text-slate-400 hover:text-amber-500'
+                    }`}
+                  >
+                    <Star
+                      className={`h-4 w-4 ${card.starred ? 'fill-current' : ''}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onStartPractice(card.deckId, 'learn', 'weak')}
+                    className="min-h-[36px] rounded-lg border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:border-sky-600 hover:text-sky-700 dark:border-slate-700 dark:text-slate-200 dark:hover:border-sky-500 dark:hover:text-sky-400 whitespace-nowrap cursor-pointer"
+                  >
+                    Ôn lại
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Study Session History Log */}
       <section className="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900 sm:p-6">

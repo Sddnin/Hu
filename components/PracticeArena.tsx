@@ -2,12 +2,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowLeft,
   CheckCircle2,
   Clock,
   RotateCcw,
   Shuffle,
   Star,
   TrendingUp,
+  Volume2,
+  VolumeX,
   XCircle,
 } from 'lucide-react';
 import { Deck, Flashcard, MODE_LABELS, PracticeMode } from '@/lib/types';
@@ -19,6 +22,8 @@ import { QuizMode } from './practice/QuizMode';
 import { SpellMode } from './practice/SpellMode';
 import { TestMode } from './practice/TestMode';
 
+export type PracticePoolFilter = 'all' | 'unmastered' | 'starred' | 'weak';
+
 interface PracticeArenaProps {
   decks: Deck[];
   allCards: Flashcard[];
@@ -27,6 +32,8 @@ interface PracticeArenaProps {
   onSelectDeck: (deckId: string) => void;
   activeMode: PracticeMode;
   onChangeMode: (mode: PracticeMode) => void;
+  poolFilter: PracticePoolFilter;
+  onChangePoolFilter: (filter: PracticePoolFilter) => void;
   onToggleStar: (card: Flashcard) => Promise<void>;
   onRecordResults: (params: {
     deck: Deck;
@@ -63,6 +70,8 @@ export function PracticeArena({
   onSelectDeck,
   activeMode,
   onChangeMode,
+  poolFilter,
+  onChangePoolFilter,
   onToggleStar,
   onRecordResults,
   onViewProgress,
@@ -76,9 +85,7 @@ export function PracticeArena({
     [activeDeck, cardsByDeck]
   );
 
-  const [poolFilter, setPoolFilter] = useState<'all' | 'unmastered' | 'starred'>(
-    'all'
-  );
+  const [autoSpeak, setAutoSpeak] = useState(false);
   const [focusedMissedIds, setFocusedMissedIds] = useState<string[] | null>(
     null
   );
@@ -110,6 +117,11 @@ export function PracticeArena({
     } else if (poolFilter === 'starred') {
       const starred = deckCards.filter((c) => c.starred);
       if (starred.length > 0) filtered = starred;
+    } else if (poolFilter === 'weak') {
+      const weak = deckCards.filter(
+        (c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7
+      );
+      if (weak.length > 0) filtered = weak;
     }
     return shuffleSeed > 0 ? shuffleCards(filtered) : filtered;
   }, [deckCards, poolFilter, focusedMissedIds, shuffleSeed]);
@@ -189,6 +201,9 @@ export function PracticeArena({
   }
 
   const starredTotal = deckCards.filter((c) => c.starred).length;
+  const weakTotal = deckCards.filter(
+    (c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7
+  ).length;
   const missedCountInSummary = summary
     ? summary.results.filter((r) => !r.isCorrect).length
     : 0;
@@ -199,6 +214,14 @@ export function PracticeArena({
       <div className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-5 dark:border-slate-800 sm:mb-8 sm:pb-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
+            <button
+              type="button"
+              onClick={onBackToDecks}
+              className="mb-1 inline-flex items-center gap-1 text-xs font-medium text-slate-500 transition-colors hover:text-sky-600 dark:text-slate-400 dark:hover:text-sky-400 cursor-pointer"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Quay lại bộ thẻ</span>
+            </button>
             <div className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
               {activeDeck.title} · {practicePool.length} thẻ
               {focusedMissedIds ? ' (Đang ôn từ sai)' : ''}
@@ -216,6 +239,25 @@ export function PracticeArena({
 
             <button
               type="button"
+              onClick={() => setAutoSpeak((v) => !v)}
+              aria-pressed={autoSpeak}
+              title="Tự động phát âm tiếng Anh khi chuyển thẻ/câu"
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                autoSpeak
+                  ? 'border-sky-600 bg-sky-50 text-sky-700 dark:border-sky-500 dark:bg-sky-950/40 dark:text-sky-300'
+                  : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800'
+              }`}
+            >
+              {autoSpeak ? (
+                <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <VolumeX className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              <span className="hidden sm:inline">Tự đọc</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => resetSessionState(true, false)}
               className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
             >
@@ -227,9 +269,7 @@ export function PracticeArena({
               aria-label="Lọc thẻ luyện tập"
               value={poolFilter}
               onChange={(e) => {
-                setPoolFilter(
-                  e.target.value as 'all' | 'unmastered' | 'starred'
-                );
+                onChangePoolFilter(e.target.value as PracticePoolFilter);
                 resetSessionState(false, true);
               }}
               className="min-h-[38px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
@@ -238,6 +278,9 @@ export function PracticeArena({
               <option value="unmastered">Chỉ thẻ chưa thuộc</option>
               <option value="starred" disabled={starredTotal === 0}>
                 Chỉ thẻ gắn sao ({starredTotal})
+              </option>
+              <option value="weak" disabled={weakTotal === 0}>
+                Chỉ thẻ hay sai ({weakTotal})
               </option>
             </select>
           </div>
@@ -281,12 +324,12 @@ export function PracticeArena({
             ))}
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
+          <div className="flex items-center justify-between gap-2 shrink-0">
             <label
               htmlFor="arena-deck-select"
-              className="text-xs font-medium text-slate-500 dark:text-slate-400"
+              className="text-xs font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap"
             >
-              Đổi bộ thẻ:
+              Bộ thẻ:
             </label>
             <select
               id="arena-deck-select"
@@ -295,7 +338,7 @@ export function PracticeArena({
                 onSelectDeck(e.target.value);
                 resetSessionState(false, true);
               }}
-              className="min-h-[38px] max-w-[200px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-800 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
+              className="min-h-[38px] flex-1 sm:flex-initial sm:max-w-[210px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-800 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
             >
               {decks.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -467,6 +510,7 @@ export function PracticeArena({
           {activeMode === 'flip' && (
             <FlipMode
               cards={practicePool}
+              autoSpeak={autoSpeak}
               onToggleStar={onToggleStar}
               onComplete={handleComplete}
             />
@@ -482,6 +526,7 @@ export function PracticeArena({
             <QuizMode
               cards={practicePool}
               allPoolCards={allCards}
+              autoSpeak={autoSpeak}
               onComplete={handleComplete}
             />
           )}
