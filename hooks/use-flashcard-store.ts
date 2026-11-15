@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildCommunityStarterDecks } from '@/lib/community-seed';
 import { buildStarterData } from '@/lib/seed-data';
 import {
@@ -178,6 +178,15 @@ export function useFlashcardStore() {
   const [streakLeaders, setStreakLeaders] = useState<StreakLeaderboardEntry[]>([]);
   const [hydrated, setHydrated] = useState(false);
 
+  // Giữ id user hiện tại trong ref để các hàm đồng bộ KHÔNG phụ thuộc vào `user`.
+  // Nếu phụ thuộc `user`, mỗi lần setUser(object mới) sẽ đổi identity của
+  // flushPendingSync -> effect khởi tạo chạy lại -> gọi /api/auth/me -> setUser
+  // object mới -> lặp vô hạn (gây đơ app sau khi đăng nhập).
+  const userIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    userIdRef.current = user?.id ?? null;
+  }, [user?.id]);
+
   const loadLocalGuestSnapshot = useCallback(() => {
     try {
       const rawDecks = localStorage.getItem(LS_DECKS);
@@ -218,7 +227,7 @@ export function useFlashcardStore() {
 
   const enqueuePendingSync = useCallback(
     (item: Omit<PendingSyncItem, 'id' | 'createdAt'>) => {
-      const uid = user?.id ?? getLastAccountId();
+      const uid = userIdRef.current ?? getLastAccountId();
       if (!uid) return;
       const next = [
         ...readPendingQueue(uid),
@@ -231,13 +240,13 @@ export function useFlashcardStore() {
       writePendingQueue(uid, next);
       setPendingSyncCount(next.length);
     },
-    [user]
+    []
   );
 
   const flushPendingSync = useCallback(
     async (targetUserId?: string) => {
       if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-      const uid = targetUserId ?? user?.id ?? getLastAccountId();
+      const uid = targetUserId ?? userIdRef.current ?? getLastAccountId();
       if (!uid) {
         setPendingSyncCount(0);
         return;
@@ -274,7 +283,7 @@ export function useFlashcardStore() {
       setPendingSyncCount(remaining.length);
       setSyncing(false);
     },
-    [user]
+    []
   );
 
   const syncMutation = useCallback(
