@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { AuthModal } from '@/components/AuthModal';
 import { DecksView } from '@/components/DecksView';
 import { Header } from '@/components/Header';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
@@ -15,6 +16,7 @@ export default function HomePage() {
   const [activeView, setActiveView] = useState<AppView>('decks');
   const [selectedDeckId, setSelectedDeckId] = useState<string>('');
   const [activeMode, setActiveMode] = useState<PracticeMode>('flip');
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   const effectiveSelectedDeckId = useMemo(() => {
     if (store.decks.length === 0) return '';
@@ -69,7 +71,7 @@ export default function HomePage() {
         authReady={store.authReady}
         syncing={store.syncing}
         syncError={store.syncError}
-        onSignIn={store.signInWithGoogle}
+        onOpenAuth={() => setAuthModalOpen(true)}
         onSignOut={store.signOutUser}
         decks={store.decks}
         selectedDeckId={effectiveSelectedDeckId}
@@ -143,6 +145,14 @@ export default function HomePage() {
         activeMode={activeMode}
         onSelectView={setActiveView}
         onStartTest={handleStartTestFromNav}
+      />
+
+      <AuthModal
+        open={authModalOpen}
+        neonConfigured={store.neonConfigured}
+        onClose={() => setAuthModalOpen(false)}
+        onLogin={store.loginWithPassword}
+        onRegister={store.registerWithPassword}
       />
     </div>
   );

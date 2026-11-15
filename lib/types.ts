@@ -54,6 +54,13 @@ export interface StudySession {
   completedAt: number;
 }
 
+export interface AuthUser {
+  id: string;
+  username: string;
+  displayName: string;
+  dailyGoal: number;
+}
+
 export const LIMITS = {
   TITLE_MAX: 100,
   DESC_MAX: 300,
@@ -64,6 +71,10 @@ export const LIMITS = {
   MEANING_MAX: 240,
   EXAMPLE_MAX: 350,
   DISPLAY_NAME_MAX: 80,
+  USERNAME_MIN: 3,
+  USERNAME_MAX: 32,
+  PASSWORD_MIN: 6,
+  PASSWORD_MAX: 128,
   DAILY_GOAL_MIN: 5,
   DAILY_GOAL_MAX: 200,
 } as const;

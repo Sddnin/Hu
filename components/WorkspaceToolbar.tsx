@@ -1,17 +1,16 @@
 'use client';
 
-import { User } from 'firebase/auth';
-import { Cloud, CloudOff, LogOut, Moon, Sun } from 'lucide-react';
-import { Deck } from '@/lib/types';
+import { LogIn, LogOut, Moon, Sun, UserCheck } from 'lucide-react';
+import { AuthUser, Deck } from '@/lib/types';
 
 interface WorkspaceToolbarProps {
   theme: 'light' | 'dark';
   onToggleTheme: (next: 'light' | 'dark') => void;
-  user: User | null;
+  user: AuthUser | null;
   authReady: boolean;
   syncing: boolean;
   syncError: string | null;
-  onSignIn: () => void;
+  onOpenAuth: () => void;
   onSignOut: () => void;
   decks: Deck[];
   selectedDeckId: string;
@@ -27,7 +26,7 @@ export function WorkspaceToolbar({
   authReady,
   syncing,
   syncError,
-  onSignIn,
+  onOpenAuth,
   onSignOut,
   decks,
   selectedDeckId,
@@ -110,19 +109,17 @@ export function WorkspaceToolbar({
             </button>
           </div>
 
-          {/* Cloud Sync / Google Auth */}
+          {/* Account Auth (Username & Password backed by Neon) */}
           {authReady && (
             <>
               {user ? (
                 <div className="flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 dark:border-slate-700 dark:bg-slate-800">
-                  <Cloud
+                  <UserCheck
                     className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0"
                     aria-hidden="true"
                   />
-                  <span className="hidden max-w-[120px] truncate text-xs font-medium text-slate-700 dark:text-slate-200 sm:inline">
-                    {syncing
-                      ? 'Đang đồng bộ...'
-                      : user.displayName || user.email}
+                  <span className="max-w-[120px] truncate text-xs font-medium text-slate-700 dark:text-slate-200">
+                    {syncing ? 'Đang lưu...' : user.displayName || user.username}
                   </span>
                   <button
                     type="button"
@@ -137,15 +134,15 @@ export function WorkspaceToolbar({
               ) : (
                 <button
                   type="button"
-                  onClick={onSignIn}
+                  onClick={onOpenAuth}
                   className="flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-slate-600 whitespace-nowrap shrink-0 cursor-pointer"
                 >
-                  <CloudOff
-                    className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400"
+                  <LogIn
+                    className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400"
                     aria-hidden="true"
                   />
-                  <span className="hidden sm:inline">Lưu đám mây (Google)</span>
-                  <span className="sm:hidden">Đồng bộ</span>
+                  <span className="hidden sm:inline">Đăng nhập / Đăng ký</span>
+                  <span className="sm:hidden">Tài khoản</span>
                 </button>
               )}
             </>

@@ -1,37 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  User,
-  onAuthStateChanged,
-  signInWithPopup,
-  signOut,
-} from 'firebase/auth';
-import {
-  Timestamp,
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where,
-  writeBatch,
-} from 'firebase/firestore';
-import {
-  OperationType,
-  auth,
-  db,
-  googleProvider,
-  handleFirestoreError,
-  testFirestoreConnection,
-} from '@/lib/firebase';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildStarterData } from '@/lib/seed-data';
 import {
+  AuthUser,
   Deck,
   Flashcard,
   LIMITS,
@@ -48,15 +20,6 @@ const LS_SESSIONS = 'lexicard_sessions_v1';
 const LS_GOAL = 'lexicard_goal_v1';
 const LS_THEME = 'lexicard_theme';
 
-function toMillis(val: unknown): number {
-  if (val instanceof Timestamp) return val.toMillis();
-  if (typeof val === 'number') return val;
-  if (val && typeof val === 'object' && 'seconds' in val) {
-    return Number((val as { seconds: number }).seconds) * 1000;
-  }
-  return Date.now();
-}
-
 function clampString(val: string, max: number): string {
   return val.trim().slice(0, max);
 }
@@ -66,10 +29,16 @@ function createUniqueId(prefix: string): string {
   return sanitizeId(`${prefix}_${Date.now()}_${rand}`);
 }
 
+export interface AuthActionResult {
+  ok: boolean;
+  error?: string;
+}
+
 export function useFlashcardStore() {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [neonConfigured, setNeonConfigured] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -79,65 +48,93 @@ export function useFlashcardStore() {
   const [dailyGoal, setDailyGoal] = useState<number>(20);
   const [hydrated, setHydrated] = useState(false);
 
-  const seededUidRef = useRef<string | null>(null);
+  const loadLocalGuestSnapshot = useCallback(() => {
+    try {
+      const rawDecks = localStorage.getItem(LS_DECKS);
+      const rawCards = localStorage.getItem(LS_CARDS);
+      const rawSessions = localStorage.getItem(LS_SESSIONS);
+      const rawGoal = localStorage.getItem(LS_GOAL);
 
-  // Initialize theme + local data + Firestore connection test
-  useEffect(() => {
-    testFirestoreConnection();
-
-    let cancelled = false;
-    Promise.resolve().then(() => {
-      if (cancelled) return;
-      try {
-        const isDark = document.documentElement.classList.contains('dark');
-        setTheme(isDark ? 'dark' : 'light');
-
-        const rawDecks = localStorage.getItem(LS_DECKS);
-        const rawCards = localStorage.getItem(LS_CARDS);
-        const rawSessions = localStorage.getItem(LS_SESSIONS);
-        const rawGoal = localStorage.getItem(LS_GOAL);
-
-        if (rawDecks && rawCards) {
-          setDecks(JSON.parse(rawDecks));
-          setCards(JSON.parse(rawCards));
-        } else {
-          const starter = buildStarterData('local');
-          setDecks(starter.decks);
-          setCards(starter.cards);
-          localStorage.setItem(LS_DECKS, JSON.stringify(starter.decks));
-          localStorage.setItem(LS_CARDS, JSON.stringify(starter.cards));
-        }
-
-        if (rawSessions) {
-          setSessions(JSON.parse(rawSessions));
-        }
-        if (rawGoal) {
-          const parsedGoal = Number(rawGoal);
-          if (
-            Number.isFinite(parsedGoal) &&
-            parsedGoal >= LIMITS.DAILY_GOAL_MIN &&
-            parsedGoal <= LIMITS.DAILY_GOAL_MAX
-          ) {
-            setDailyGoal(parsedGoal);
-          }
-        }
-      } catch {
+      if (rawDecks && rawCards) {
+        setDecks(JSON.parse(rawDecks));
+        setCards(JSON.parse(rawCards));
+      } else {
         const starter = buildStarterData('local');
         setDecks(starter.decks);
         setCards(starter.cards);
-      } finally {
-        setHydrated(true);
+        localStorage.setItem(LS_DECKS, JSON.stringify(starter.decks));
+        localStorage.setItem(LS_CARDS, JSON.stringify(starter.cards));
       }
+
+      setSessions(rawSessions ? JSON.parse(rawSessions) : []);
+
+      if (rawGoal) {
+        const parsedGoal = Number(rawGoal);
+        if (
+          Number.isFinite(parsedGoal) &&
+          parsedGoal >= LIMITS.DAILY_GOAL_MIN &&
+          parsedGoal <= LIMITS.DAILY_GOAL_MAX
+        ) {
+          setDailyGoal(parsedGoal);
+        }
+      }
+    } catch {
+      const starter = buildStarterData('local');
+      setDecks(starter.decks);
+      setCards(starter.cards);
+      setSessions([]);
+    }
+  }, []);
+
+  // Initialize theme + local guest data + check Neon session cookie
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      const isDark = document.documentElement.classList.contains('dark');
+      setTheme(isDark ? 'dark' : 'light');
+      loadLocalGuestSnapshot();
+      setHydrated(true);
     });
+
+    async function checkSession() {
+      try {
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
+        if (!res.ok) {
+          if (!cancelled) setAuthReady(true);
+          return;
+        }
+        const data = await res.json();
+        if (cancelled) return;
+
+        setNeonConfigured(Boolean(data.configured));
+        if (data.user) {
+          setUser(data.user);
+          setDecks(Array.isArray(data.decks) ? data.decks : []);
+          setCards(Array.isArray(data.cards) ? data.cards : []);
+          setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+          if (typeof data.user.dailyGoal === 'number') {
+            setDailyGoal(data.user.dailyGoal);
+          }
+        }
+      } catch {
+        // Keep guest mode available
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    }
+
+    checkSession();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadLocalGuestSnapshot]);
 
   // Persist local guest mode state to localStorage when not signed in
   useEffect(() => {
-    if (!hydrated || user) return;
+    if (!hydrated || !authReady || user) return;
     try {
       localStorage.setItem(LS_DECKS, JSON.stringify(decks));
       localStorage.setItem(LS_CARDS, JSON.stringify(cards));
@@ -146,295 +143,7 @@ export function useFlashcardStore() {
     } catch {
       // Ignore storage quota errors
     }
-  }, [hydrated, user, decks, cards, sessions, dailyGoal]);
-
-  // Listen to Firebase Auth state
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (nextUser) => {
-      setUser(nextUser);
-      setAuthReady(true);
-    });
-    return () => unsub();
-  }, []);
-
-  // Bootstrap user profile and migrate local data on first cloud sign-in
-  useEffect(() => {
-    if (!authReady || !user || !user.emailVerified) return;
-
-    const uid = user.uid;
-    let cancelled = false;
-
-    async function ensureUserAndSeed() {
-      if (seededUidRef.current === uid) return;
-      setSyncing(true);
-      setSyncError(null);
-
-      const userRef = doc(db, 'users', uid);
-      try {
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          const displayName = clampString(
-            user?.displayName || user?.email?.split('@')[0] || 'Học viên',
-            LIMITS.DISPLAY_NAME_MAX
-          );
-          await setDoc(userRef, {
-            ownerId: uid,
-            displayName,
-            dailyGoal: Math.min(
-              LIMITS.DAILY_GOAL_MAX,
-              Math.max(LIMITS.DAILY_GOAL_MIN, Math.round(dailyGoal))
-            ),
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          const data = userSnap.data();
-          if (typeof data.dailyGoal === 'number') {
-            setDailyGoal(data.dailyGoal);
-          }
-        }
-
-        // Check if cloud decks exist; if empty, seed starter/local decks & sessions
-        const decksCol = collection(db, 'users', uid, 'decks');
-        const existingDecks = await getDocs(
-          query(decksCol, where('ownerId', '==', uid))
-        );
-
-        if (existingDecks.empty && !cancelled) {
-          const rawDecks = localStorage.getItem(LS_DECKS);
-          const rawCards = localStorage.getItem(LS_CARDS);
-          const rawSessions = localStorage.getItem(LS_SESSIONS);
-
-          const sourceDecks: Deck[] = rawDecks
-            ? JSON.parse(rawDecks)
-            : buildStarterData(uid).decks;
-          const sourceCards: Flashcard[] = rawCards
-            ? JSON.parse(rawCards)
-            : buildStarterData(uid).cards;
-          const sourceSessions: StudySession[] = rawSessions
-            ? JSON.parse(rawSessions)
-            : [];
-
-          const batch = writeBatch(db);
-          for (const d of sourceDecks.slice(0, 20)) {
-            const deckId = sanitizeId(d.id);
-            const deckCards = sourceCards.filter((c) => c.deckId === d.id);
-            const masteredCount = deckCards.filter(
-              (c) => c.mastery === 'mastered'
-            ).length;
-            batch.set(doc(db, 'users', uid, 'decks', deckId), {
-              id: deckId,
-              ownerId: uid,
-              title: clampString(d.title, LIMITS.TITLE_MAX) || 'Bộ thẻ',
-              description: clampString(d.description || '', LIMITS.DESC_MAX),
-              category: clampString(d.category || 'Chung', LIMITS.CATEGORY_MAX),
-              cardCount: deckCards.length,
-              masteredCount,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-
-            for (const c of deckCards.slice(0, 100)) {
-              const cardId = sanitizeId(c.id);
-              const reviewCount = Math.max(0, Math.round(c.reviewCount || 0));
-              const correctCount = Math.min(
-                reviewCount,
-                Math.max(0, Math.round(c.correctCount || 0))
-              );
-              batch.set(
-                doc(db, 'users', uid, 'decks', deckId, 'cards', cardId),
-                {
-                  id: cardId,
-                  deckId,
-                  ownerId: uid,
-                  term: clampString(c.term, LIMITS.TERM_MAX) || 'word',
-                  phonetic: clampString(c.phonetic || '', LIMITS.PHONETIC_MAX),
-                  partOfSpeech: clampString(c.partOfSpeech || '', LIMITS.POS_MAX),
-                  meaning: clampString(c.meaning, LIMITS.MEANING_MAX) || 'nghĩa',
-                  example: clampString(c.example || '', LIMITS.EXAMPLE_MAX),
-                  mastery: c.mastery || 'new',
-                  reviewCount,
-                  correctCount,
-                  starred: Boolean(c.starred),
-                  createdAt: serverTimestamp(),
-                  updatedAt: serverTimestamp(),
-                }
-              );
-            }
-          }
-
-          for (const s of sourceSessions.slice(0, 30)) {
-            const sessionId = sanitizeId(s.id);
-            const totalItems = Math.max(1, Math.round(s.totalItems || 1));
-            const correctCount = Math.min(
-              totalItems,
-              Math.max(0, Math.round(s.correctCount || 0))
-            );
-            const accuracy = Math.min(
-              100,
-              Math.max(0, Math.round((correctCount / totalItems) * 100))
-            );
-            batch.set(doc(db, 'users', uid, 'studySessions', sessionId), {
-              id: sessionId,
-              ownerId: uid,
-              deckId: sanitizeId(s.deckId),
-              deckTitle: clampString(s.deckTitle, LIMITS.TITLE_MAX) || 'Bộ thẻ',
-              mode: s.mode,
-              totalItems,
-              correctCount,
-              accuracy,
-              durationSeconds: Math.min(
-                86400,
-                Math.max(0, Math.round(s.durationSeconds || 0))
-              ),
-              dateKey: /^\d{4}-\d{2}-\d{2}$/.test(s.dateKey)
-                ? s.dateKey
-                : getTodayDateKey(),
-              completedAt: serverTimestamp(),
-            });
-          }
-
-          await batch.commit();
-        }
-        seededUidRef.current = uid;
-      } catch (error) {
-        setSyncError('Không thể đồng bộ dữ liệu đám mây.');
-        handleFirestoreError(error, OperationType.WRITE, `users/${uid}`);
-      } finally {
-        if (!cancelled) setSyncing(false);
-      }
-    }
-
-    ensureUserAndSeed();
-    return () => {
-      cancelled = true;
-    };
-  }, [authReady, user, dailyGoal]);
-
-  // Attach real-time Firestore listeners for decks & studySessions when signed in
-  useEffect(() => {
-    if (!authReady || !user || !user.emailVerified) return;
-    const uid = user.uid;
-
-    const decksPath = `users/${uid}/decks`;
-    const decksQ = query(collection(db, decksPath), where('ownerId', '==', uid));
-    const unsubDecks = onSnapshot(
-      decksQ,
-      (snap) => {
-        const list: Deck[] = snap.docs
-          .map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              ownerId: data.ownerId,
-              title: data.title,
-              description: data.description || '',
-              category: data.category || 'Chung',
-              cardCount: Number(data.cardCount || 0),
-              masteredCount: Number(data.masteredCount || 0),
-              createdAt: toMillis(data.createdAt),
-              updatedAt: toMillis(data.updatedAt),
-            };
-          })
-          .sort((a, b) => a.createdAt - b.createdAt);
-        setDecks(list);
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, decksPath)
-    );
-
-    const sessionsPath = `users/${uid}/studySessions`;
-    const sessionsQ = query(
-      collection(db, sessionsPath),
-      where('ownerId', '==', uid)
-    );
-    const unsubSessions = onSnapshot(
-      sessionsQ,
-      (snap) => {
-        const list: StudySession[] = snap.docs
-          .map((d) => {
-            const data = d.data();
-            return {
-              id: d.id,
-              ownerId: data.ownerId,
-              deckId: data.deckId,
-              deckTitle: data.deckTitle,
-              mode: data.mode as PracticeMode,
-              totalItems: Number(data.totalItems || 1),
-              correctCount: Number(data.correctCount || 0),
-              accuracy: Number(data.accuracy || 0),
-              durationSeconds: Number(data.durationSeconds || 0),
-              dateKey: data.dateKey,
-              completedAt: toMillis(data.completedAt),
-            };
-          })
-          .sort((a, b) => b.completedAt - a.completedAt);
-        setSessions(list);
-      },
-      (error) => handleFirestoreError(error, OperationType.LIST, sessionsPath)
-    );
-
-    return () => {
-      unsubDecks();
-      unsubSessions();
-    };
-  }, [authReady, user]);
-
-  // Subscribe to cards for each deck in Firestore when signed in
-  const deckIdsKey = useMemo(
-    () => decks.map((d) => d.id).sort().join(','),
-    [decks]
-  );
-
-  useEffect(() => {
-    if (!authReady || !user || !user.emailVerified || !deckIdsKey) return;
-    const uid = user.uid;
-    const deckIds = deckIdsKey.split(',').filter(Boolean);
-    const cardsMap = new Map<string, Flashcard[]>();
-
-    const unsubs = deckIds.map((deckId) => {
-      const cardsPath = `users/${uid}/decks/${deckId}/cards`;
-      const q = query(collection(db, cardsPath), where('ownerId', '==', uid));
-      return onSnapshot(
-        q,
-        (snap) => {
-          const deckCards: Flashcard[] = snap.docs
-            .map((c) => {
-              const data = c.data();
-              return {
-                id: c.id,
-                deckId: data.deckId,
-                ownerId: data.ownerId,
-                term: data.term,
-                phonetic: data.phonetic || '',
-                partOfSpeech: data.partOfSpeech || '',
-                meaning: data.meaning,
-                example: data.example || '',
-                mastery: (data.mastery as MasteryLevel) || 'new',
-                reviewCount: Number(data.reviewCount || 0),
-                correctCount: Number(data.correctCount || 0),
-                starred: Boolean(data.starred),
-                createdAt: toMillis(data.createdAt),
-                updatedAt: toMillis(data.updatedAt),
-              };
-            })
-            .sort((a, b) => a.createdAt - b.createdAt);
-
-          cardsMap.set(deckId, deckCards);
-          const merged: Flashcard[] = [];
-          for (const id of deckIds) {
-            const list = cardsMap.get(id);
-            if (list) merged.push(...list);
-          }
-          setCards(merged);
-        },
-        (error) => handleFirestoreError(error, OperationType.LIST, cardsPath)
-      );
-    });
-
-    return () => {
-      unsubs.forEach((fn) => fn());
-    };
-  }, [authReady, user, deckIdsKey]);
+  }, [hydrated, authReady, user, decks, cards, sessions, dailyGoal]);
 
   const toggleTheme = useCallback((next?: 'light' | 'dark') => {
     setTheme((prev) => {
@@ -453,42 +162,107 @@ export function useFlashcardStore() {
     });
   }, []);
 
-  const signInWithGoogle = useCallback(async () => {
-    setSyncError(null);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Đăng nhập thất bại';
-      if (!msg.includes('popup-closed-by-user')) {
-        setSyncError('Không thể đăng nhập Google lúc này.');
+  const loginWithPassword = useCallback(
+    async (input: {
+      username: string;
+      password: string;
+    }): Promise<AuthActionResult> => {
+      setSyncError(null);
+      setSyncing(true);
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return {
+            ok: false,
+            error: data.error || 'Đăng nhập thất bại.',
+          };
+        }
+
+        setNeonConfigured(true);
+        setUser(data.user);
+        setDecks(Array.isArray(data.decks) ? data.decks : []);
+        setCards(Array.isArray(data.cards) ? data.cards : []);
+        setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+        if (typeof data.user?.dailyGoal === 'number') {
+          setDailyGoal(data.user.dailyGoal);
+        }
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Không thể kết nối tới máy chủ.' };
+      } finally {
+        setSyncing(false);
       }
-    }
-  }, []);
+    },
+    []
+  );
+
+  const registerWithPassword = useCallback(
+    async (input: {
+      username: string;
+      password: string;
+      displayName?: string;
+      importGuestData?: boolean;
+    }): Promise<AuthActionResult> => {
+      setSyncError(null);
+      setSyncing(true);
+      try {
+        const payload = {
+          username: input.username,
+          password: input.password,
+          displayName: input.displayName,
+          importGuestData: input.importGuestData ?? true,
+          dailyGoal,
+          decks: input.importGuestData ? decks : [],
+          cards: input.importGuestData ? cards : [],
+          sessions: input.importGuestData ? sessions : [],
+        };
+
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return {
+            ok: false,
+            error: data.error || 'Đăng ký tài khoản thất bại.',
+          };
+        }
+
+        setNeonConfigured(true);
+        setUser(data.user);
+        setDecks(Array.isArray(data.decks) ? data.decks : []);
+        setCards(Array.isArray(data.cards) ? data.cards : []);
+        setSessions(Array.isArray(data.sessions) ? data.sessions : []);
+        if (typeof data.user?.dailyGoal === 'number') {
+          setDailyGoal(data.user.dailyGoal);
+        }
+        return { ok: true };
+      } catch {
+        return { ok: false, error: 'Không thể kết nối tới máy chủ.' };
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [dailyGoal, decks, cards, sessions]
+  );
 
   const signOutUser = useCallback(async () => {
-    seededUidRef.current = null;
-    await signOut(auth);
-    // Restore local snapshot for offline guest session
+    setSyncError(null);
     try {
-      const rawDecks = localStorage.getItem(LS_DECKS);
-      const rawCards = localStorage.getItem(LS_CARDS);
-      const rawSessions = localStorage.getItem(LS_SESSIONS);
-      if (rawDecks && rawCards) {
-        setDecks(JSON.parse(rawDecks));
-        setCards(JSON.parse(rawCards));
-        setSessions(rawSessions ? JSON.parse(rawSessions) : []);
-      } else {
-        const starter = buildStarterData('local');
-        setDecks(starter.decks);
-        setCards(starter.cards);
-        setSessions([]);
-      }
+      await fetch('/api/auth/logout', { method: 'POST' });
     } catch {
-      const starter = buildStarterData('local');
-      setDecks(starter.decks);
-      setCards(starter.cards);
+      // Ignore network errors on logout
     }
-  }, []);
+    setUser(null);
+    loadLocalGuestSnapshot();
+  }, [loadLocalGuestSnapshot]);
 
   const cardsByDeck = useMemo(() => {
     const map: Record<string, Flashcard[]> = {};
@@ -507,44 +281,48 @@ export function useFlashcardStore() {
       category: string;
     }): Promise<string> => {
       const deckId = createUniqueId('deck');
-      const title = clampString(input.title, LIMITS.TITLE_MAX);
+      const title = clampString(input.title, LIMITS.TITLE_MAX) || 'Bộ thẻ mới';
       const description = clampString(input.description, LIMITS.DESC_MAX);
-      const category = clampString(input.category || 'Cá nhân', LIMITS.CATEGORY_MAX);
+      const category =
+        clampString(input.category || 'Cá nhân', LIMITS.CATEGORY_MAX) ||
+        'Cá nhân';
       const now = Date.now();
 
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const deckPath = `users/${uid}/decks/${deckId}`;
+      const optimisticDeck: Deck = {
+        id: deckId,
+        ownerId: user ? user.id : 'local',
+        title,
+        description,
+        category,
+        cardCount: 0,
+        masteredCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setDecks((prev) => [...prev, optimisticDeck]);
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          await setDoc(doc(db, deckPath), {
-            id: deckId,
-            ownerId: uid,
-            title,
-            description,
-            category,
-            cardCount: 0,
-            masteredCount: 0,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
+          const res = await fetch('/api/decks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: deckId,
+              title,
+              description,
+              category,
+            }),
           });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, deckPath);
+          if (!res.ok) {
+            setSyncError('Không thể lưu bộ thẻ lên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi lưu bộ thẻ.');
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        setDecks((prev) => [
-          ...prev,
-          {
-            id: deckId,
-            ownerId: 'local',
-            title,
-            description,
-            category,
-            cardCount: 0,
-            masteredCount: 0,
-            createdAt: now,
-            updatedAt: now,
-          },
-        ]);
       }
       return deckId;
     },
@@ -557,31 +335,38 @@ export function useFlashcardStore() {
       deckId: string,
       input: { title: string; description: string; category: string }
     ) => {
-      const title = clampString(input.title, LIMITS.TITLE_MAX);
+      const title = clampString(input.title, LIMITS.TITLE_MAX) || 'Bộ thẻ';
       const description = clampString(input.description, LIMITS.DESC_MAX);
-      const category = clampString(input.category || 'Cá nhân', LIMITS.CATEGORY_MAX);
+      const category =
+        clampString(input.category || 'Cá nhân', LIMITS.CATEGORY_MAX) ||
+        'Cá nhân';
+      const now = Date.now();
 
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const deckPath = `users/${uid}/decks/${deckId}`;
+      setDecks((prev) =>
+        prev.map((d) =>
+          d.id === deckId
+            ? { ...d, title, description, category, updatedAt: now }
+            : d
+        )
+      );
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          await updateDoc(doc(db, deckPath), {
-            title,
-            description,
-            category,
-            updatedAt: serverTimestamp(),
+          const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title, description, category }),
           });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, deckPath);
+          if (!res.ok) {
+            setSyncError('Không thể cập nhật bộ thẻ trên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi cập nhật bộ thẻ.');
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        setDecks((prev) =>
-          prev.map((d) =>
-            d.id === deckId
-              ? { ...d, title, description, category, updatedAt: Date.now() }
-              : d
-          )
-        );
       }
     },
     [user]
@@ -590,26 +375,27 @@ export function useFlashcardStore() {
   // CRUD: Delete Deck
   const deleteDeck = useCallback(
     async (deckId: string) => {
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const deckPath = `users/${uid}/decks/${deckId}`;
+      setDecks((prev) => prev.filter((d) => d.id !== deckId));
+      setCards((prev) => prev.filter((c) => c.deckId !== deckId));
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          const deckCards = cards.filter((c) => c.deckId === deckId);
-          const batch = writeBatch(db);
-          for (const c of deckCards) {
-            batch.delete(doc(db, `${deckPath}/cards/${c.id}`));
+          const res = await fetch(`/api/decks/${encodeURIComponent(deckId)}`, {
+            method: 'DELETE',
+          });
+          if (!res.ok) {
+            setSyncError('Không thể xóa bộ thẻ trên Neon.');
           }
-          batch.delete(doc(db, deckPath));
-          await batch.commit();
-        } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, deckPath);
+        } catch {
+          setSyncError('Mất kết nối khi xóa bộ thẻ.');
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        setDecks((prev) => prev.filter((d) => d.id !== deckId));
-        setCards((prev) => prev.filter((c) => c.deckId !== deckId));
       }
     },
-    [user, cards]
+    [user]
   );
 
   // CRUD: Add Card
@@ -638,62 +424,56 @@ export function useFlashcardStore() {
         (c) => c.mastery === 'mastered'
       ).length;
 
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const cardPath = `users/${uid}/decks/${deckId}/cards/${cardId}`;
-        const deckPath = `users/${uid}/decks/${deckId}`;
+      const newCard: Flashcard = {
+        id: cardId,
+        deckId,
+        ownerId: user ? user.id : 'local',
+        term,
+        phonetic,
+        partOfSpeech,
+        meaning,
+        example,
+        mastery: 'new',
+        reviewCount: 0,
+        correctCount: 0,
+        starred: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setCards((prev) => [...prev, newCard]);
+      setDecks((prev) =>
+        prev.map((d) =>
+          d.id === deckId
+            ? { ...d, cardCount: newCount, masteredCount, updatedAt: now }
+            : d
+        )
+      );
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          const batch = writeBatch(db);
-          batch.set(doc(db, cardPath), {
-            id: cardId,
-            deckId,
-            ownerId: uid,
-            term,
-            phonetic,
-            partOfSpeech,
-            meaning,
-            example,
-            mastery: 'new',
-            reviewCount: 0,
-            correctCount: 0,
-            starred: false,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
+          const res = await fetch('/api/cards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: cardId,
+              deckId,
+              term,
+              phonetic,
+              partOfSpeech,
+              meaning,
+              example,
+            }),
           });
-          batch.update(doc(db, deckPath), {
-            cardCount: newCount,
-            masteredCount,
-            updatedAt: serverTimestamp(),
-          });
-          await batch.commit();
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, cardPath);
+          if (!res.ok) {
+            setSyncError('Không thể lưu thẻ lên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi lưu thẻ.');
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        const newCard: Flashcard = {
-          id: cardId,
-          deckId,
-          ownerId: 'local',
-          term,
-          phonetic,
-          partOfSpeech,
-          meaning,
-          example,
-          mastery: 'new',
-          reviewCount: 0,
-          correctCount: 0,
-          starred: false,
-          createdAt: now,
-          updatedAt: now,
-        };
-        setCards((prev) => [...prev, newCard]);
-        setDecks((prev) =>
-          prev.map((d) =>
-            d.id === deckId
-              ? { ...d, cardCount: newCount, masteredCount, updatedAt: now }
-              : d
-          )
-        );
       }
     },
     [user, cards]
@@ -712,71 +492,67 @@ export function useFlashcardStore() {
       }>
     ) => {
       if (items.length === 0) return;
+      const sliced = items.slice(0, 100);
       const existingDeckCards = cards.filter((c) => c.deckId === deckId);
-      const newCount = existingDeckCards.length + items.length;
+      const newCount = existingDeckCards.length + sliced.length;
       const masteredCount = existingDeckCards.filter(
         (c) => c.mastery === 'mastered'
       ).length;
       const now = Date.now();
 
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const deckPath = `users/${uid}/decks/${deckId}`;
+      const created: Flashcard[] = sliced.map((item, idx) => ({
+        id: createUniqueId(`card_${idx}`),
+        deckId,
+        ownerId: user ? user.id : 'local',
+        term: clampString(item.term, LIMITS.TERM_MAX),
+        phonetic: clampString(item.phonetic || '', LIMITS.PHONETIC_MAX),
+        partOfSpeech: clampString(item.partOfSpeech || '', LIMITS.POS_MAX),
+        meaning: clampString(item.meaning, LIMITS.MEANING_MAX),
+        example: clampString(item.example || '', LIMITS.EXAMPLE_MAX),
+        mastery: 'new',
+        reviewCount: 0,
+        correctCount: 0,
+        starred: false,
+        createdAt: now + idx,
+        updatedAt: now + idx,
+      }));
+
+      setCards((prev) => [...prev, ...created]);
+      setDecks((prev) =>
+        prev.map((d) =>
+          d.id === deckId
+            ? { ...d, cardCount: newCount, masteredCount, updatedAt: now }
+            : d
+        )
+      );
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          const batch = writeBatch(db);
-          for (const item of items.slice(0, 50)) {
-            const cardId = createUniqueId('card');
-            batch.set(doc(db, `${deckPath}/cards/${cardId}`), {
-              id: cardId,
+          const res = await fetch('/api/cards', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
               deckId,
-              ownerId: uid,
-              term: clampString(item.term, LIMITS.TERM_MAX),
-              phonetic: clampString(item.phonetic || '', LIMITS.PHONETIC_MAX),
-              partOfSpeech: clampString(item.partOfSpeech || '', LIMITS.POS_MAX),
-              meaning: clampString(item.meaning, LIMITS.MEANING_MAX),
-              example: clampString(item.example || '', LIMITS.EXAMPLE_MAX),
-              mastery: 'new',
-              reviewCount: 0,
-              correctCount: 0,
-              starred: false,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          }
-          batch.update(doc(db, deckPath), {
-            cardCount: newCount,
-            masteredCount,
-            updatedAt: serverTimestamp(),
+              items: created.map((c) => ({
+                id: c.id,
+                term: c.term,
+                phonetic: c.phonetic,
+                partOfSpeech: c.partOfSpeech,
+                meaning: c.meaning,
+                example: c.example,
+              })),
+            }),
           });
-          await batch.commit();
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, `${deckPath}/cards`);
+          if (!res.ok) {
+            setSyncError('Không thể nhập hàng loạt lên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi nhập thẻ.');
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        const created: Flashcard[] = items.map((item, idx) => ({
-          id: createUniqueId(`card_${idx}`),
-          deckId,
-          ownerId: 'local',
-          term: clampString(item.term, LIMITS.TERM_MAX),
-          phonetic: clampString(item.phonetic || '', LIMITS.PHONETIC_MAX),
-          partOfSpeech: clampString(item.partOfSpeech || '', LIMITS.POS_MAX),
-          meaning: clampString(item.meaning, LIMITS.MEANING_MAX),
-          example: clampString(item.example || '', LIMITS.EXAMPLE_MAX),
-          mastery: 'new',
-          reviewCount: 0,
-          correctCount: 0,
-          starred: false,
-          createdAt: now + idx,
-          updatedAt: now + idx,
-        }));
-        setCards((prev) => [...prev, ...created]);
-        setDecks((prev) =>
-          prev.map((d) =>
-            d.id === deckId
-              ? { ...d, cardCount: newCount, masteredCount, updatedAt: now }
-              : d
-          )
-        );
       }
     },
     [user, cards]
@@ -799,38 +575,47 @@ export function useFlashcardStore() {
       const partOfSpeech = clampString(input.partOfSpeech, LIMITS.POS_MAX);
       const meaning = clampString(input.meaning, LIMITS.MEANING_MAX);
       const example = clampString(input.example, LIMITS.EXAMPLE_MAX);
+      const now = Date.now();
 
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const cardPath = `users/${uid}/decks/${card.deckId}/cards/${card.id}`;
+      setCards((prev) =>
+        prev.map((c) =>
+          c.id === card.id
+            ? {
+                ...c,
+                term,
+                phonetic,
+                partOfSpeech,
+                meaning,
+                example,
+                updatedAt: now,
+              }
+            : c
+        )
+      );
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          await updateDoc(doc(db, cardPath), {
-            term,
-            phonetic,
-            partOfSpeech,
-            meaning,
-            example,
-            updatedAt: serverTimestamp(),
+          const res = await fetch(`/api/cards/${encodeURIComponent(card.id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              term,
+              phonetic,
+              partOfSpeech,
+              meaning,
+              example,
+            }),
           });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, cardPath);
+          if (!res.ok) {
+            setSyncError('Không thể cập nhật thẻ trên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi cập nhật thẻ.');
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        setCards((prev) =>
-          prev.map((c) =>
-            c.id === card.id
-              ? {
-                  ...c,
-                  term,
-                  phonetic,
-                  partOfSpeech,
-                  meaning,
-                  example,
-                  updatedAt: Date.now(),
-                }
-              : c
-          )
-        );
       }
     },
     [user]
@@ -846,37 +631,37 @@ export function useFlashcardStore() {
       const masteredCount = remaining.filter(
         (c) => c.mastery === 'mastered'
       ).length;
+      const now = Date.now();
 
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const deckPath = `users/${uid}/decks/${card.deckId}`;
-        const cardPath = `${deckPath}/cards/${card.id}`;
+      setCards((prev) => prev.filter((c) => c.id !== card.id));
+      setDecks((prev) =>
+        prev.map((d) =>
+          d.id === card.deckId
+            ? {
+                ...d,
+                cardCount: newCount,
+                masteredCount,
+                updatedAt: now,
+              }
+            : d
+        )
+      );
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          const batch = writeBatch(db);
-          batch.delete(doc(db, cardPath));
-          batch.update(doc(db, deckPath), {
-            cardCount: newCount,
-            masteredCount,
-            updatedAt: serverTimestamp(),
+          const res = await fetch(`/api/cards/${encodeURIComponent(card.id)}`, {
+            method: 'DELETE',
           });
-          await batch.commit();
-        } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, cardPath);
+          if (!res.ok) {
+            setSyncError('Không thể xóa thẻ trên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi xóa thẻ.');
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        setCards((prev) => prev.filter((c) => c.id !== card.id));
-        setDecks((prev) =>
-          prev.map((d) =>
-            d.id === card.deckId
-              ? {
-                  ...d,
-                  cardCount: newCount,
-                  masteredCount,
-                  updatedAt: Date.now(),
-                }
-              : d
-          )
-        );
       }
     },
     [user, cards]
@@ -886,25 +671,29 @@ export function useFlashcardStore() {
   const toggleCardStar = useCallback(
     async (card: Flashcard) => {
       const nextStarred = !card.starred;
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const cardPath = `users/${uid}/decks/${card.deckId}/cards/${card.id}`;
+      const now = Date.now();
+
+      setCards((prev) =>
+        prev.map((c) =>
+          c.id === card.id
+            ? { ...c, starred: nextStarred, updatedAt: now }
+            : c
+        )
+      );
+
+      if (user) {
         try {
-          await updateDoc(doc(db, cardPath), {
-            starred: nextStarred,
-            updatedAt: serverTimestamp(),
+          const res = await fetch(`/api/cards/${encodeURIComponent(card.id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ starred: nextStarred }),
           });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, cardPath);
+          if (!res.ok) {
+            setSyncError('Không thể lưu trạng thái gắn sao.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi lưu trạng thái gắn sao.');
         }
-      } else {
-        setCards((prev) =>
-          prev.map((c) =>
-            c.id === card.id
-              ? { ...c, starred: nextStarred, updatedAt: Date.now() }
-              : c
-          )
-        );
       }
     },
     [user]
@@ -923,82 +712,77 @@ export function useFlashcardStore() {
       );
       const now = Date.now();
 
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const deckPath = `users/${uid}/decks/${newDeckId}`;
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          const batch = writeBatch(db);
-          batch.set(doc(db, deckPath), {
-            id: newDeckId,
-            ownerId: uid,
-            title: newTitle,
-            description: clampString(sourceDeck.description, LIMITS.DESC_MAX),
-            category: clampString(sourceDeck.category, LIMITS.CATEGORY_MAX),
-            cardCount: sourceCards.length,
-            masteredCount: 0,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-          for (const c of sourceCards.slice(0, 100)) {
-            const cardId = createUniqueId('card');
-            batch.set(doc(db, `${deckPath}/cards/${cardId}`), {
-              id: cardId,
-              deckId: newDeckId,
-              ownerId: uid,
-              term: c.term,
-              phonetic: c.phonetic,
-              partOfSpeech: c.partOfSpeech,
-              meaning: c.meaning,
-              example: c.example,
-              mastery: 'new',
-              reviewCount: 0,
-              correctCount: 0,
-              starred: c.starred,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
+          const res = await fetch(
+            `/api/decks/${encodeURIComponent(sourceDeckId)}/duplicate`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ newDeckId }),
+            }
+          );
+          if (!res.ok) {
+            setSyncError('Không thể nhân bản bộ thẻ trên Neon.');
+            return null;
           }
-          await batch.commit();
-        } catch (error) {
-          handleFirestoreError(error, OperationType.CREATE, deckPath);
+          const data = await res.json();
+          if (data.deck) {
+            setDecks((prev) => [...prev, data.deck]);
+          }
+          if (Array.isArray(data.cards)) {
+            setCards((prev) => [...prev, ...data.cards]);
+          }
+          return data.deck?.id || newDeckId;
+        } catch {
+          setSyncError('Mất kết nối khi nhân bản bộ thẻ.');
+          return null;
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        const clonedDeck: Deck = {
-          id: newDeckId,
-          ownerId: 'local',
-          title: newTitle,
-          description: sourceDeck.description,
-          category: sourceDeck.category,
-          cardCount: sourceCards.length,
-          masteredCount: 0,
-          createdAt: now,
-          updatedAt: now,
-        };
-        const clonedCards: Flashcard[] = sourceCards.map((c, idx) => ({
-          ...c,
-          id: createUniqueId(`card_${idx}`),
-          deckId: newDeckId,
-          ownerId: 'local',
-          mastery: 'new',
-          reviewCount: 0,
-          correctCount: 0,
-          createdAt: now + idx,
-          updatedAt: now + idx,
-        }));
-        setDecks((prev) => [...prev, clonedDeck]);
-        setCards((prev) => [...prev, ...clonedCards]);
       }
+
+      const clonedDeck: Deck = {
+        id: newDeckId,
+        ownerId: 'local',
+        title: newTitle,
+        description: sourceDeck.description,
+        category: sourceDeck.category,
+        cardCount: sourceCards.length,
+        masteredCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const clonedCards: Flashcard[] = sourceCards.map((c, idx) => ({
+        ...c,
+        id: createUniqueId(`card_${idx}`),
+        deckId: newDeckId,
+        ownerId: 'local',
+        mastery: 'new',
+        reviewCount: 0,
+        correctCount: 0,
+        createdAt: now + idx,
+        updatedAt: now + idx,
+      }));
+      setDecks((prev) => [...prev, clonedDeck]);
+      setCards((prev) => [...prev, ...clonedCards]);
       return newDeckId;
     },
     [user, decks, cards]
   );
 
-  // Update card mastery & log practice session atomically
+  // Update card mastery & log practice session
   const recordPracticeResults = useCallback(
     async (params: {
       deck: Deck;
       mode: PracticeMode;
-      results: Array<{ cardId: string; isCorrect: boolean; explicitMastery?: MasteryLevel }>;
+      results: Array<{
+        cardId: string;
+        isCorrect: boolean;
+        explicitMastery?: MasteryLevel;
+      }>;
       totalItems: number;
       correctCount: number;
       durationSeconds: number;
@@ -1007,15 +791,21 @@ export function useFlashcardStore() {
         params;
       const sessionId = createUniqueId('sess');
       const safeTotal = Math.max(1, Math.round(totalItems));
-      const safeCorrect = Math.min(safeTotal, Math.max(0, Math.round(correctCount)));
+      const safeCorrect = Math.min(
+        safeTotal,
+        Math.max(0, Math.round(correctCount))
+      );
       const accuracy = Math.min(
         100,
         Math.max(0, Math.round((safeCorrect / safeTotal) * 100))
       );
-      const safeDuration = Math.min(86400, Math.max(1, Math.round(durationSeconds)));
+      const safeDuration = Math.min(
+        86400,
+        Math.max(1, Math.round(durationSeconds))
+      );
       const dateKey = getTodayDateKey();
+      const now = Date.now();
 
-      // Compute updated cards map
       const deckCards = cards.filter((c) => c.deckId === deck.id);
       const resultMap = new Map<
         string,
@@ -1038,7 +828,11 @@ export function useFlashcardStore() {
         let mastery: MasteryLevel = c.mastery;
         if (delta.explicit) {
           mastery = delta.explicit;
-        } else if (delta.corrects > 0 && correct >= 2 && correct / reviewCount >= 0.7) {
+        } else if (
+          delta.corrects > 0 &&
+          correct >= 2 &&
+          correct / reviewCount >= 0.7
+        ) {
           mastery = 'mastered';
         } else if (delta.corrects > 0 || mastery === 'new') {
           mastery = 'learning';
@@ -1050,7 +844,7 @@ export function useFlashcardStore() {
           reviewCount,
           correctCount: correct,
           mastery,
-          updatedAt: Date.now(),
+          updatedAt: now,
         };
       });
 
@@ -1058,80 +852,76 @@ export function useFlashcardStore() {
         (c) => c.mastery === 'mastered'
       ).length;
 
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const sessionPath = `users/${uid}/studySessions/${sessionId}`;
-        const deckPath = `users/${uid}/decks/${deck.id}`;
+      const newSession: StudySession = {
+        id: sessionId,
+        ownerId: user ? user.id : 'local',
+        deckId: deck.id,
+        deckTitle: deck.title,
+        mode,
+        totalItems: safeTotal,
+        correctCount: safeCorrect,
+        accuracy,
+        durationSeconds: safeDuration,
+        dateKey,
+        completedAt: now,
+      };
+
+      setSessions((prev) => [newSession, ...prev]);
+      setCards((prev) =>
+        prev.map((c) => {
+          const match = updatedDeckCards.find((u) => u.id === c.id);
+          return match || c;
+        })
+      );
+      setDecks((prev) =>
+        prev.map((d) =>
+          d.id === deck.id
+            ? {
+                ...d,
+                cardCount: updatedDeckCards.length,
+                masteredCount: newMasteredCount,
+                updatedAt: now,
+              }
+            : d
+        )
+      );
+
+      if (user) {
+        setSyncing(true);
+        setSyncError(null);
         try {
-          const batch = writeBatch(db);
-          batch.set(doc(db, sessionPath), {
-            id: sessionId,
-            ownerId: uid,
-            deckId: deck.id,
-            deckTitle: clampString(deck.title, LIMITS.TITLE_MAX),
-            mode,
-            totalItems: safeTotal,
-            correctCount: safeCorrect,
-            accuracy,
-            durationSeconds: safeDuration,
-            dateKey,
-            completedAt: serverTimestamp(),
-          });
+          const cardUpdates = updatedDeckCards
+            .filter((c) => resultMap.has(c.id))
+            .map((c) => ({
+              id: c.id,
+              mastery: c.mastery,
+              reviewCount: c.reviewCount,
+              correctCount: c.correctCount,
+            }));
 
-          for (const updated of updatedDeckCards) {
-            if (!resultMap.has(updated.id)) continue;
-            batch.update(doc(db, `${deckPath}/cards/${updated.id}`), {
-              mastery: updated.mastery,
-              reviewCount: updated.reviewCount,
-              correctCount: updated.correctCount,
-              updatedAt: serverTimestamp(),
-            });
+          const res = await fetch('/api/practice', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionId,
+              deckId: deck.id,
+              deckTitle: deck.title,
+              mode,
+              totalItems: safeTotal,
+              correctCount: safeCorrect,
+              durationSeconds: safeDuration,
+              dateKey,
+              cardUpdates,
+            }),
+          });
+          if (!res.ok) {
+            setSyncError('Không thể lưu lịch sử học lên Neon.');
           }
-
-          batch.update(doc(db, deckPath), {
-            cardCount: updatedDeckCards.length,
-            masteredCount: newMasteredCount,
-            updatedAt: serverTimestamp(),
-          });
-
-          await batch.commit();
-        } catch (error) {
-          handleFirestoreError(error, OperationType.WRITE, sessionPath);
+        } catch {
+          setSyncError('Mất kết nối khi lưu lịch sử học.');
+        } finally {
+          setSyncing(false);
         }
-      } else {
-        const now = Date.now();
-        const newSession: StudySession = {
-          id: sessionId,
-          ownerId: 'local',
-          deckId: deck.id,
-          deckTitle: deck.title,
-          mode,
-          totalItems: safeTotal,
-          correctCount: safeCorrect,
-          accuracy,
-          durationSeconds: safeDuration,
-          dateKey,
-          completedAt: now,
-        };
-        setSessions((prev) => [newSession, ...prev]);
-        setCards((prev) =>
-          prev.map((c) => {
-            const match = updatedDeckCards.find((u) => u.id === c.id);
-            return match || c;
-          })
-        );
-        setDecks((prev) =>
-          prev.map((d) =>
-            d.id === deck.id
-              ? {
-                  ...d,
-                  cardCount: updatedDeckCards.length,
-                  masteredCount: newMasteredCount,
-                  updatedAt: now,
-                }
-              : d
-          )
-        );
       }
     },
     [user, cards]
@@ -1139,16 +929,20 @@ export function useFlashcardStore() {
 
   const deleteStudySession = useCallback(
     async (sessionId: string) => {
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const path = `users/${uid}/studySessions/${sessionId}`;
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+
+      if (user) {
         try {
-          await deleteDoc(doc(db, path));
-        } catch (error) {
-          handleFirestoreError(error, OperationType.DELETE, path);
+          const res = await fetch(
+            `/api/sessions/${encodeURIComponent(sessionId)}`,
+            { method: 'DELETE' }
+          );
+          if (!res.ok) {
+            setSyncError('Không thể xóa phiên học trên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi xóa phiên học.');
         }
-      } else {
-        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
       }
     },
     [user]
@@ -1161,21 +955,19 @@ export function useFlashcardStore() {
         Math.max(LIMITS.DAILY_GOAL_MIN, Math.round(goal))
       );
       setDailyGoal(clamped);
-      if (user && user.emailVerified) {
-        const uid = user.uid;
-        const userPath = `users/${uid}`;
+
+      if (user) {
         try {
-          const displayName = clampString(
-            user.displayName || user.email?.split('@')[0] || 'Học viên',
-            LIMITS.DISPLAY_NAME_MAX
-          );
-          await updateDoc(doc(db, userPath), {
-            displayName,
-            dailyGoal: clamped,
-            updatedAt: serverTimestamp(),
+          const res = await fetch('/api/profile', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dailyGoal: clamped }),
           });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, userPath);
+          if (!res.ok) {
+            setSyncError('Không thể lưu mục tiêu lên Neon.');
+          }
+        } catch {
+          setSyncError('Mất kết nối khi lưu mục tiêu.');
         }
       }
     },
@@ -1187,9 +979,11 @@ export function useFlashcardStore() {
     toggleTheme,
     user,
     authReady,
+    neonConfigured,
     syncing,
     syncError,
-    signInWithGoogle,
+    loginWithPassword,
+    registerWithPassword,
     signOutUser,
     decks,
     cards,
