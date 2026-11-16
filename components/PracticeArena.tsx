@@ -25,6 +25,7 @@ import {
   MODE_LABELS,
   PracticeMode,
 } from '@/lib/types';
+import { prioritizeCards } from '@/lib/spaced-repetition';
 import type { PracticeResultItem } from './practice/FlipMode';
 import type { PracticeCompletionMeta } from './practice/MatchMode';
 
@@ -145,31 +146,9 @@ function shuffleCards(list: Flashcard[], seed = 1): Flashcard[] {
   return copy;
 }
 
-function getSmartPriorityTier(card: Flashcard): number {
-  if (card.mastery === 'new') return 0;
-  if (card.mastery === 'learning') {
-    const acc = card.reviewCount > 0 ? card.correctCount / card.reviewCount : 0;
-    return acc < 0.7 ? 1 : 2;
-  }
-  return 3;
-}
-
 function smartShuffleCards(list: Flashcard[], seed = 1): Flashcard[] {
-  const buckets: [Flashcard[], Flashcard[], Flashcard[], Flashcard[]] = [
-    [],
-    [],
-    [],
-    [],
-  ];
-  for (const card of list) {
-    buckets[getSmartPriorityTier(card)].push(card);
-  }
-  return [
-    ...shuffleCards(buckets[0], seed + 11),
-    ...shuffleCards(buckets[1], seed + 37),
-    ...shuffleCards(buckets[2], seed + 73),
-    ...shuffleCards(buckets[3], seed + 109),
-  ];
+  // Lặp lại cách quãng: ưu tiên thẻ mới/yếu/quá hạn ôn (xem lib/spaced-repetition.ts)
+  return prioritizeCards(list, seed);
 }
 
 function formatDuration(sec: number): string {

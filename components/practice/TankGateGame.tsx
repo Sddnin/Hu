@@ -23,6 +23,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { speakEnglish } from '@/lib/speech';
+import { prioritizeCards } from '@/lib/spaced-repetition';
 import { TankAudioEngine } from '@/lib/tank-audio';
 import { Flashcard } from '@/lib/types';
 import { PracticeResultItem } from './FlipMode';
@@ -1540,10 +1541,17 @@ export function TankGateGame({
       pGeo.attributes.size.needsUpdate = true;
     };
 
-    const buildDeckCycle = (): Flashcard[] => {
+    // Thẻ đã trả lời sai trong vòng hiện tại và đã được xếp lại 1 lần (tránh lặp vô hạn)
+    const requeuedIds = new Set<string>();
+
+    const buildDeckCycle = (first = false): Flashcard[] => {
       const src = cardsRef.current;
       if (src.length === 0) return [];
-      return shuffleInPlace([...src]);
+      requeuedIds.clear();
+      // Lần đầu: giữ đúng thứ tự ưu tiên (thẻ mới/yếu/quá hạn trước) do PracticeArena truyền vào.
+      // Các vòng sau: xáo có trọng số để vẫn ưu tiên thẻ yếu nhưng không lặp y hệt.
+      if (first) return [...src];
+      return prioritizeCards(src, (Math.random() * 1e9) | 0);
     };
 
     const nextLoopCard = (): Flashcard | null => {
@@ -1615,7 +1623,7 @@ export function TankGateGame({
       S.wordCursor = 0;
       S.nextGateZ = 95;
       S.nextPickZ = 60;
-      S.words = buildDeckCycle();
+      S.words = buildDeckCycle(true);
       S.log = [];
       S.shake = 0;
       S.tilt = 0;
@@ -1852,6 +1860,13 @@ export function TankGateGame({
         S.combo = 0;
         S.stun = 0.45;
         S.speed *= 0.48;
+
+        // Lặp lại cách quãng trong phiên: từ vừa sai sẽ quay lại sau vài cổng nữa
+        if (gt.rawCard && !requeuedIds.has(gt.rawCard.id)) {
+          requeuedIds.add(gt.rawCard.id);
+          const at = Math.min(S.words.length, S.wordCursor + 4);
+          S.words.splice(at, 0, gt.rawCard);
+        }
 
         burst(hx, 3, gt.z, 30, 0xff3b46, 12, 1.2);
         triggerFlash('bad');
