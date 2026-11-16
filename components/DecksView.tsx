@@ -787,14 +787,131 @@ export function DecksView({
                     :
                   </div>
                   <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                    {/* Grouped 2-in-1 Card: Học & Trắc nghiệm */}
+                    <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50/90 p-2.5 dark:border-slate-800 dark:bg-slate-950/60">
+                      <div className="flex items-center justify-between gap-2 px-1">
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                          Học & Trắc nghiệm
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          2 chế độ kết hợp
+                        </span>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {(
+                          [
+                            {
+                              id: 'learn' as const,
+                              label: 'Học thông minh',
+                              hint: 'Lặp đến khi thuộc',
+                            },
+                            {
+                              id: 'quiz' as const,
+                              label: 'Trắc nghiệm',
+                              hint: '4 đáp án nhanh',
+                            },
+                          ] as const
+                        ).map((sub) => (
+                          <button
+                            key={sub.id}
+                            type="button"
+                            disabled={tagScopedCards.length === 0}
+                            onClick={() =>
+                              onStartPractice(
+                                activeDeck.id,
+                                sub.id,
+                                'all',
+                                effectiveTagFilter
+                              )
+                            }
+                            className="group min-h-[54px] rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left transition-colors hover:border-sky-600 hover:bg-sky-50/70 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-500 dark:hover:bg-sky-950/30 cursor-pointer"
+                          >
+                            <div className="text-xs font-semibold text-slate-900 group-hover:text-sky-700 dark:text-slate-100 dark:group-hover:text-sky-400 sm:text-sm whitespace-nowrap">
+                              {sub.label}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                              {sub.hint}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={tagScopedCards.length === 0}
+                      onClick={() =>
+                        onStartPractice(
+                          activeDeck.id,
+                          'flip',
+                          'all',
+                          effectiveTagFilter
+                        )
+                      }
+                      className="group flex min-h-[60px] flex-col justify-center rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition-colors hover:border-sky-600 hover:bg-sky-50/70 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950/60 dark:hover:border-sky-500 dark:hover:bg-sky-950/30 cursor-pointer"
+                    >
+                      <div className="text-sm font-semibold text-slate-900 group-hover:text-sky-700 dark:text-slate-100 dark:group-hover:text-sky-400 whitespace-nowrap">
+                        Lật thẻ 3D
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">
+                        Tự chạy & vuốt thẻ
+                      </div>
+                    </button>
+
+                    {/* Grouped 2-in-1 Card: Điền từ & Nghe viết */}
+                    <div className="col-span-2 rounded-xl border border-slate-200 bg-slate-50/90 p-2.5 dark:border-slate-800 dark:bg-slate-950/60">
+                      <div className="flex items-center justify-between gap-2 px-1">
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                          Điền từ & Nghe viết
+                        </span>
+                        <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                          2 chế độ gõ từ
+                        </span>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        {(
+                          [
+                            {
+                              id: 'fill' as const,
+                              label: 'Điền từ',
+                              hint: 'Theo câu ví dụ',
+                            },
+                            {
+                              id: 'spell' as const,
+                              label: 'Nghe & Viết',
+                              hint: 'Chính tả & phát âm',
+                            },
+                          ] as const
+                        ).map((sub) => (
+                          <button
+                            key={sub.id}
+                            type="button"
+                            disabled={tagScopedCards.length === 0}
+                            onClick={() =>
+                              onStartPractice(
+                                activeDeck.id,
+                                sub.id,
+                                'all',
+                                effectiveTagFilter
+                              )
+                            }
+                            className="group min-h-[54px] rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-left transition-colors hover:border-sky-600 hover:bg-sky-50/70 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-sky-500 dark:hover:bg-sky-950/30 cursor-pointer"
+                          >
+                            <div className="text-xs font-semibold text-slate-900 group-hover:text-sky-700 dark:text-slate-100 dark:group-hover:text-sky-400 sm:text-sm whitespace-nowrap">
+                              {sub.label}
+                            </div>
+                            <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                              {sub.hint}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
                     {(
                       [
-                        { id: 'flip', label: 'Lật thẻ 3D', hint: 'Tự chạy & vuốt thẻ' },
-                        { id: 'learn', label: 'Học thông minh', hint: 'Lặp đến khi thuộc' },
-                        { id: 'quiz', label: 'Trắc nghiệm', hint: '4 đáp án nhanh' },
-                        { id: 'fill', label: 'Điền từ', hint: 'Theo câu ví dụ' },
                         { id: 'match', label: 'Nối & Ghép thẻ', hint: 'Nối 2 cột · 4×3 · 4×4' },
-                        { id: 'spell', label: 'Nghe & Viết', hint: 'Chính tả & phát âm' },
+                        { id: 'speak', label: 'Luyện nói AI', hint: 'Đọc & đặt câu do AI chấm' },
                         { id: 'blast', label: 'Xếp khối Blast', hint: 'Lưới 8×8 ăn điểm BXH' },
                         { id: 'meteor', label: 'Bắn thiên thạch', hint: 'Súng laser vũ trụ BXH' },
                         { id: 'tank', label: 'Xe tăng 3D', hint: 'Lái tăng 390 húc cổng' },

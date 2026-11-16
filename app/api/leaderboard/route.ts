@@ -27,6 +27,7 @@ const VALID_LB_MODES = new Set<LeaderboardMode>([
   'match_grid',
   'match_memory',
   'spell',
+  'speak',
   'blast',
   'meteor',
   'tank',

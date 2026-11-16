@@ -41,6 +41,10 @@ const ModeLoading = () => (
 
 // Keep each practice mode in its own chunk. In particular, Three.js is not
 // downloaded until the user chooses the Tank game.
+const AiSpeakMode = dynamic(
+  () => import('./practice/AiSpeakMode').then((mod) => mod.AiSpeakMode),
+  { loading: ModeLoading }
+);
 const BlockBlastGame = dynamic(
   () => import('./practice/BlockBlastGame').then((mod) => mod.BlockBlastGame),
   { loading: ModeLoading }
@@ -659,29 +663,75 @@ export function PracticeArena({
           >
             {(
               [
-                { id: 'flip', label: 'Lật thẻ' },
-                { id: 'learn', label: 'Học thông minh' },
-                { id: 'quiz', label: 'Trắc nghiệm' },
-                { id: 'fill', label: 'Điền từ' },
-                { id: 'match', label: 'Nối thẻ' },
-                { id: 'spell', label: 'Nghe & Viết' },
-                { id: 'blast', label: 'Xếp khối Blast' },
-                { id: 'meteor', label: 'Bắn thiên thạch' },
-                { id: 'tank', label: 'Xe tăng 3D' },
-                { id: 'test', label: 'Kiểm tra' },
+                {
+                  id: 'flip',
+                  label: 'Lật thẻ',
+                  isActive: activeMode === 'flip',
+                  targetMode: 'flip' as PracticeMode,
+                },
+                {
+                  id: 'study_quiz',
+                  label: 'Học & Trắc nghiệm',
+                  isActive: activeMode === 'learn' || activeMode === 'quiz',
+                  targetMode: 'learn' as PracticeMode,
+                },
+                {
+                  id: 'fill_spell',
+                  label: 'Điền từ & Nghe viết',
+                  isActive: activeMode === 'fill' || activeMode === 'spell',
+                  targetMode: 'fill' as PracticeMode,
+                },
+                {
+                  id: 'match',
+                  label: 'Nối thẻ',
+                  isActive: activeMode === 'match',
+                  targetMode: 'match' as PracticeMode,
+                },
+                {
+                  id: 'speak',
+                  label: 'Luyện nói AI',
+                  isActive: activeMode === 'speak',
+                  targetMode: 'speak' as PracticeMode,
+                },
+                {
+                  id: 'blast',
+                  label: 'Xếp khối Blast',
+                  isActive: activeMode === 'blast',
+                  targetMode: 'blast' as PracticeMode,
+                },
+                {
+                  id: 'meteor',
+                  label: 'Bắn thiên thạch',
+                  isActive: activeMode === 'meteor',
+                  targetMode: 'meteor' as PracticeMode,
+                },
+                {
+                  id: 'tank',
+                  label: 'Xe tăng 3D',
+                  isActive: activeMode === 'tank',
+                  targetMode: 'tank' as PracticeMode,
+                },
+                {
+                  id: 'test',
+                  label: 'Kiểm tra',
+                  isActive: activeMode === 'test',
+                  targetMode: 'test' as PracticeMode,
+                },
               ] as const
             ).map((m) => (
               <button
                 key={m.id}
                 role="tab"
                 type="button"
-                aria-selected={activeMode === m.id}
+                aria-selected={m.isActive}
                 onClick={() => {
-                  onChangeMode(m.id);
-                  resetSessionState(false, true);
+                  if (!m.isActive) {
+                    onChangeMode(m.targetMode);
+                    resetSessionState(false, true);
+                  }
                 }}
                 className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                  activeMode === m.id
+                  m.isActive
                     ? 'bg-white text-slate-900 shadow-xs dark:bg-slate-800 dark:text-slate-100'
                     : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
                 }`}
@@ -749,6 +799,7 @@ export function PracticeArena({
                 { id: 'match_columns', label: 'Nối 2 cột' },
                 { id: 'test', label: 'Kiểm tra' },
                 { id: 'quiz', label: 'Trắc nghiệm' },
+                { id: 'speak', label: 'Luyện nói AI' },
               ] as const
             ).map((filter) => (
               <button
@@ -993,41 +1044,155 @@ export function PracticeArena({
         </div>
       ) : (
         /* Active Practice Mode */
-        <div
-          key={`${activeDeck.id}_${effectiveTagFilter}_${activeMode}_${sessionKey}`}
-        >
-          {activeMode === 'flip' && (
-            <FlipMode
-              cards={practicePool}
-              autoSpeak={autoSpeak}
-              onToggleStar={onToggleStar}
-              onComplete={handleComplete}
-            />
+        <div>
+          {(activeMode === 'learn' || activeMode === 'quiz') && (
+            <div className="mx-auto mb-5 max-w-2xl rounded-2xl border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="grid grid-cols-2 gap-1.5">
+                {(
+                  [
+                    {
+                      id: 'learn' as const,
+                      title: 'Học thông minh',
+                      subtitle: 'Lặp lại thẻ đến khi thuộc',
+                    },
+                    {
+                      id: 'quiz' as const,
+                      title: 'Trắc nghiệm',
+                      subtitle: 'Chọn nhanh 4 đáp án',
+                    },
+                  ] as const
+                ).map((sub) => {
+                  const selected = activeMode === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => {
+                        if (!selected) {
+                          onChangeMode(sub.id);
+                          resetSessionState(false, true);
+                        }
+                      }}
+                      className={`rounded-xl px-3 py-2 text-left transition-colors cursor-pointer ${
+                        selected
+                          ? 'bg-white shadow-xs dark:bg-slate-800'
+                          : 'text-slate-600 hover:bg-white/60 dark:text-slate-400 dark:hover:bg-slate-800/60'
+                      }`}
+                    >
+                      <div
+                        className={`text-xs font-bold sm:text-sm ${
+                          selected
+                            ? 'text-sky-700 dark:text-sky-400'
+                            : 'text-slate-800 dark:text-slate-200'
+                        }`}
+                      >
+                        {sub.title}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        {sub.subtitle}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
-          {activeMode === 'learn' && (
-            <LearnMode
-              cards={practicePool}
-              allPoolCards={allCards}
-              onComplete={handleComplete}
-            />
+
+          {(activeMode === 'fill' || activeMode === 'spell') && (
+            <div className="mx-auto mb-5 max-w-2xl rounded-2xl border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="grid grid-cols-2 gap-1.5">
+                {(
+                  [
+                    {
+                      id: 'fill' as const,
+                      title: 'Điền từ',
+                      subtitle: 'Hoàn thành câu ví dụ',
+                    },
+                    {
+                      id: 'spell' as const,
+                      title: 'Nghe & Viết',
+                      subtitle: 'Luyện nghe và chính tả',
+                    },
+                  ] as const
+                ).map((sub) => {
+                  const selected = activeMode === sub.id;
+                  return (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      onClick={() => {
+                        if (!selected) {
+                          onChangeMode(sub.id);
+                          resetSessionState(false, true);
+                        }
+                      }}
+                      className={`rounded-xl px-3 py-2 text-left transition-colors cursor-pointer ${
+                        selected
+                          ? 'bg-white shadow-xs dark:bg-slate-800'
+                          : 'text-slate-600 hover:bg-white/60 dark:text-slate-400 dark:hover:bg-slate-800/60'
+                      }`}
+                    >
+                      <div
+                        className={`text-xs font-bold sm:text-sm ${
+                          selected
+                            ? 'text-sky-700 dark:text-sky-400'
+                            : 'text-slate-800 dark:text-slate-200'
+                        }`}
+                      >
+                        {sub.title}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                        {sub.subtitle}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           )}
-          {activeMode === 'quiz' && (
-            <QuizMode
-              cards={practicePool}
-              allPoolCards={allCards}
-              autoSpeak={autoSpeak}
-              onComplete={handleComplete}
-            />
-          )}
-          {activeMode === 'fill' && (
-            <FillBlankMode cards={practicePool} onComplete={handleComplete} />
-          )}
-          {activeMode === 'match' && (
-            <MatchMode cards={practicePool} onComplete={handleComplete} />
-          )}
-          {activeMode === 'spell' && (
-            <SpellMode cards={practicePool} onComplete={handleComplete} />
-          )}
+
+          <div
+            key={`${activeDeck.id}_${effectiveTagFilter}_${activeMode}_${sessionKey}`}
+          >
+            {activeMode === 'flip' && (
+              <FlipMode
+                cards={practicePool}
+                autoSpeak={autoSpeak}
+                onToggleStar={onToggleStar}
+                onComplete={handleComplete}
+              />
+            )}
+            {activeMode === 'learn' && (
+              <LearnMode
+                cards={practicePool}
+                allPoolCards={allCards}
+                onComplete={handleComplete}
+              />
+            )}
+            {activeMode === 'quiz' && (
+              <QuizMode
+                cards={practicePool}
+                allPoolCards={allCards}
+                autoSpeak={autoSpeak}
+                onComplete={handleComplete}
+              />
+            )}
+            {activeMode === 'fill' && (
+              <FillBlankMode cards={practicePool} onComplete={handleComplete} />
+            )}
+            {activeMode === 'match' && (
+              <MatchMode cards={practicePool} onComplete={handleComplete} />
+            )}
+            {activeMode === 'spell' && (
+              <SpellMode cards={practicePool} onComplete={handleComplete} />
+            )}
+            {activeMode === 'speak' && (
+              <AiSpeakMode
+                cards={practicePool}
+                autoSpeak={autoSpeak}
+                onComplete={handleComplete}
+              />
+            )}
           {activeMode === 'blast' && (
             <BlockBlastGame
               cards={practicePool}
@@ -1067,6 +1232,7 @@ export function PracticeArena({
               onComplete={handleComplete}
             />
           )}
+          </div>
         </div>
       )}
     </div>

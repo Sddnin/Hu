@@ -41,6 +41,7 @@ export async function POST(req: NextRequest) {
       'fill',
       'match',
       'spell',
+      'speak',
       'blast',
       'meteor',
       'tank',

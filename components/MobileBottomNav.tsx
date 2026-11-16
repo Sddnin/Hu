@@ -1,6 +1,6 @@
 'use client';
 
-import { Gamepad2, Globe, Layers, Trophy } from 'lucide-react';
+import { Bot, Gamepad2, Globe, Layers, Trophy } from 'lucide-react';
 import { AppView } from '@/lib/types';
 
 interface MobileBottomNavProps {
@@ -41,6 +41,13 @@ export function MobileBottomNav({
       onClick: () => onSelectView('practice'),
     },
     {
+      id: 'ai',
+      label: 'Chat AI',
+      icon: Bot,
+      active: activeView === 'ai',
+      onClick: () => onSelectView('ai'),
+    },
+    {
       id: 'leaderboard',
       label: 'BXH & Chuỗi',
       icon: Trophy,
@@ -54,7 +61,7 @@ export function MobileBottomNav({
       aria-label="Điều hướng di động"
       className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 md:hidden"
     >
-      <div className="grid h-14 grid-cols-4 items-center">
+      <div className="grid h-14 grid-cols-5 items-center">
         {items.map((item) => {
           const Icon = item.icon;
           return (

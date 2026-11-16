@@ -32,6 +32,10 @@ const AuthModal = dynamic(
 );
 
 // Each major screen is loaded only when the user opens that tab.
+const AiTutorView = dynamic(
+  () => import('@/components/AiTutorView').then((mod) => mod.AiTutorView),
+  { loading: ScreenLoading }
+);
 const CommunityView = dynamic(
   () => import('@/components/CommunityView').then((mod) => mod.CommunityView),
   { loading: ScreenLoading }
@@ -263,6 +267,12 @@ export default function HomePage() {
             onOpenAuth={handleOpenAuth}
             onViewLeaderboard={() => setActiveView('leaderboard')}
             onBackToDecks={() => setActiveView('decks')}
+          />
+        ) : activeView === 'ai' ? (
+          <AiTutorView
+            decks={store.decks}
+            cardsByDeck={store.cardsByDeck}
+            allCards={store.cards}
           />
         ) : (
           <LeaderboardStreakView

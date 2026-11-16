@@ -7,6 +7,7 @@ export type PracticeMode =
   | 'fill'
   | 'match'
   | 'spell'
+  | 'speak'
   | 'blast'
   | 'meteor'
   | 'tank'
@@ -18,7 +19,7 @@ export type LeaderboardMode =
   | 'match_grid'
   | 'match_memory';
 
-export type AppView = 'decks' | 'community' | 'practice' | 'leaderboard';
+export type AppView = 'decks' | 'community' | 'practice' | 'ai' | 'leaderboard';
 
 export interface Deck {
   id: string;
@@ -147,6 +148,7 @@ export const MODE_LABELS: Record<PracticeMode, string> = {
   fill: 'Điền từ',
   match: 'Nối thẻ',
   spell: 'Nghe & Viết',
+  speak: 'Luyện nói AI',
   blast: 'Xếp khối Blast',
   meteor: 'Bắn thiên thạch',
   tank: 'Xe tăng 3D',
