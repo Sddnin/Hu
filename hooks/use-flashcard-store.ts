@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildCommunityStarterDecks } from '@/lib/community-seed';
 import { buildStarterData } from '@/lib/seed-data';
 import {
+  AiQuotaSnapshot,
   AuthUser,
   CommunityCardItem,
   CommunityDeck,
@@ -188,6 +189,19 @@ export function useFlashcardStore() {
   const [communityDecks, setCommunityDecks] = useState<CommunityDeck[]>([]);
   const [leaderboardEntries, setLeaderboardEntries] = useState<LeaderboardEntry[]>([]);
   const [streakLeaders, setStreakLeaders] = useState<StreakLeaderboardEntry[]>([]);
+  const [aiQuota, setAiQuota] = useState<AiQuotaSnapshot>(() => ({
+    dateKey: getTodayDateKey(),
+    chatUsed: 0,
+    chatBonus: 0,
+    chatLimit: LIMITS.BASE_CHAT_LIMIT,
+    chatRemaining: LIMITS.BASE_CHAT_LIMIT,
+    speakUsed: 0,
+    speakBonus: 0,
+    speakLimit: LIMITS.BASE_SPEAK_LIMIT,
+    speakRemaining: LIMITS.BASE_SPEAK_LIMIT,
+  }));
+  const [claimedMissionIds, setClaimedMissionIds] = useState<string[]>([]);
+  const [missionsLoading, setMissionsLoading] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   // Giữ id user hiện tại trong ref để các hàm đồng bộ KHÔNG phụ thuộc vào `user`.
@@ -474,6 +488,138 @@ export function useFlashcardStore() {
       // Ignore storage quota errors
     }
   }, [hydrated, authReady, user, decks, cards, sessions, dailyGoal]);
+
+  const refreshMissionsAndQuota = useCallback(async () => {
+    if (!userIdRef.current) {
+      setClaimedMissionIds([]);
+      setAiQuota({
+        dateKey: getTodayDateKey(),
+        chatUsed: 0,
+        chatBonus: 0,
+        chatLimit: LIMITS.BASE_CHAT_LIMIT,
+        chatRemaining: LIMITS.BASE_CHAT_LIMIT,
+        speakUsed: 0,
+        speakBonus: 0,
+        speakLimit: LIMITS.BASE_SPEAK_LIMIT,
+        speakRemaining: LIMITS.BASE_SPEAK_LIMIT,
+      });
+      return;
+    }
+
+    setMissionsLoading(true);
+    try {
+      const res = await fetch('/api/missions', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.quota) {
+        setAiQuota(data.quota as AiQuotaSnapshot);
+      }
+      if (Array.isArray(data.claimedIds)) {
+        setClaimedMissionIds(data.claimedIds);
+      }
+    } catch {
+      // Ignore network errors
+    } finally {
+      setMissionsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authReady) return;
+    let cancelled = false;
+
+    async function syncMissions() {
+      if (!user?.id) {
+        await Promise.resolve();
+        if (cancelled) return;
+        setClaimedMissionIds([]);
+        setAiQuota({
+          dateKey: getTodayDateKey(),
+          chatUsed: 0,
+          chatBonus: 0,
+          chatLimit: LIMITS.BASE_CHAT_LIMIT,
+          chatRemaining: LIMITS.BASE_CHAT_LIMIT,
+          speakUsed: 0,
+          speakBonus: 0,
+          speakLimit: LIMITS.BASE_SPEAK_LIMIT,
+          speakRemaining: LIMITS.BASE_SPEAK_LIMIT,
+        });
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/missions', { cache: 'no-store' });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.quota) {
+          setAiQuota(data.quota as AiQuotaSnapshot);
+        }
+        if (Array.isArray(data.claimedIds)) {
+          setClaimedMissionIds(data.claimedIds);
+        }
+      } catch {
+        // Ignore network errors
+      }
+    }
+
+    void syncMissions();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, user?.id]);
+
+  const updateAiQuota = useCallback(
+    (next: AiQuotaSnapshot | null | undefined) => {
+      if (next && typeof next.chatRemaining === 'number') {
+        setAiQuota(next);
+      }
+    },
+    []
+  );
+
+  const claimMission = useCallback(
+    async (
+      missionId: string
+    ): Promise<{
+      ok: boolean;
+      error?: string;
+      chatReward?: number;
+      speakReward?: number;
+    }> => {
+      if (!userIdRef.current) {
+        return { ok: false, error: 'Vui lòng đăng nhập để nhận thưởng.' };
+      }
+      try {
+        const res = await fetch('/api/missions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ missionId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return {
+            ok: false,
+            error: data.error || 'Không thể nhận thưởng nhiệm vụ.',
+          };
+        }
+        if (data.quota) {
+          setAiQuota(data.quota as AiQuotaSnapshot);
+        }
+        if (Array.isArray(data.claimedIds)) {
+          setClaimedMissionIds(data.claimedIds);
+        }
+        return {
+          ok: true,
+          chatReward: Number(data.chatReward) || 0,
+          speakReward: Number(data.speakReward) || 0,
+        };
+      } catch {
+        return { ok: false, error: 'Mất kết nối tới máy chủ.' };
+      }
+    },
+    []
+  );
 
   const toggleTheme = useCallback((next?: 'light' | 'dark') => {
     setTheme((prev) => {
@@ -1630,6 +1776,9 @@ export function useFlashcardStore() {
     communityDecks,
     leaderboardEntries,
     streakLeaders,
+    aiQuota,
+    claimedMissionIds,
+    missionsLoading,
     hydrated,
     createDeck,
     updateDeck,
@@ -1645,6 +1794,9 @@ export function useFlashcardStore() {
     recordPracticeResults,
     deleteStudySession,
     updateDailyGoal,
+    refreshMissionsAndQuota,
+    claimMission,
+    updateAiQuota,
     refreshCommunityDecks,
     publishDeckToCommunity,
     unpublishCommunityDeck,

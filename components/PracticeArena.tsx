@@ -16,6 +16,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  AiQuotaSnapshot,
   AuthUser,
   Deck,
   Flashcard,
@@ -129,6 +130,9 @@ interface PracticeArenaProps {
   onOpenAuth: () => void;
   onViewLeaderboard: () => void;
   onBackToDecks: () => void;
+  aiQuota?: AiQuotaSnapshot;
+  onUpdateAiQuota?: (next: AiQuotaSnapshot | null | undefined) => void;
+  onGoToMissions?: () => void;
 }
 
 function mulberry32(seed: number): () => number {
@@ -183,6 +187,9 @@ export function PracticeArena({
   onOpenAuth,
   onViewLeaderboard,
   onBackToDecks,
+  aiQuota,
+  onUpdateAiQuota,
+  onGoToMissions,
 }: PracticeArenaProps) {
   const activeDeck =
     decks.find((d) => d.id === selectedDeckId) || decks[0] || null;
@@ -1188,8 +1195,13 @@ export function PracticeArena({
             )}
             {activeMode === 'speak' && (
               <AiSpeakMode
+                user={user}
+                aiQuota={aiQuota}
                 cards={practicePool}
                 autoSpeak={autoSpeak}
+                onUpdateQuota={onUpdateAiQuota}
+                onOpenAuth={onOpenAuth}
+                onGoToMissions={onGoToMissions}
                 onComplete={handleComplete}
               />
             )}

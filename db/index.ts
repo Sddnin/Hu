@@ -185,6 +185,39 @@ export async function ensureNeonSchema(): Promise<void> {
       await sql`
         CREATE INDEX IF NOT EXISTS leaderboard_mode_score_idx ON leaderboard_entries (mode, score DESC)
       `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS user_daily_quotas (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          date_key TEXT NOT NULL,
+          chat_used INTEGER NOT NULL DEFAULT 0,
+          speak_used INTEGER NOT NULL DEFAULT 0,
+          chat_bonus INTEGER NOT NULL DEFAULT 0,
+          speak_bonus INTEGER NOT NULL DEFAULT 0,
+          updated_at BIGINT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE INDEX IF NOT EXISTS user_daily_quotas_user_date_idx ON user_daily_quotas (user_id, date_key)
+      `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS user_mission_claims (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          date_key TEXT NOT NULL,
+          mission_id TEXT NOT NULL,
+          chat_reward INTEGER NOT NULL DEFAULT 0,
+          speak_reward INTEGER NOT NULL DEFAULT 0,
+          claimed_at BIGINT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE INDEX IF NOT EXISTS user_mission_claims_user_date_idx ON user_mission_claims (user_id, date_key)
+      `;
     })().catch((err) => {
       globalThis._neonSchemaPromise = undefined;
       throw err;

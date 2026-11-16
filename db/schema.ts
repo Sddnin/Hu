@@ -126,3 +126,37 @@ export const leaderboardEntries = pgTable(
     index('leaderboard_mode_score_idx').on(table.mode, table.score),
   ]
 );
+
+export const userDailyQuotas = pgTable(
+  'user_daily_quotas',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    dateKey: text('date_key').notNull(),
+    chatUsed: integer('chat_used').notNull().default(0),
+    speakUsed: integer('speak_used').notNull().default(0),
+    chatBonus: integer('chat_bonus').notNull().default(0),
+    speakBonus: integer('speak_bonus').notNull().default(0),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [index('user_daily_quotas_user_date_idx').on(table.userId, table.dateKey)]
+);
+
+export const userMissionClaims = pgTable(
+  'user_mission_claims',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    dateKey: text('date_key').notNull(),
+    missionId: text('mission_id').notNull(),
+    chatReward: integer('chat_reward').notNull().default(0),
+    speakReward: integer('speak_reward').notNull().default(0),
+    claimedAt: bigint('claimed_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [index('user_mission_claims_user_date_idx').on(table.userId, table.dateKey)]
+);
+

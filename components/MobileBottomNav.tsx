@@ -1,6 +1,6 @@
 'use client';
 
-import { Bot, Gamepad2, Globe, Layers, Trophy } from 'lucide-react';
+import { Bot, Gamepad2, Layers, Target, Trophy } from 'lucide-react';
 import { AppView } from '@/lib/types';
 
 interface MobileBottomNavProps {
@@ -23,15 +23,8 @@ export function MobileBottomNav({
       id: 'decks',
       label: 'Bộ thẻ',
       icon: Layers,
-      active: activeView === 'decks',
+      active: activeView === 'decks' || activeView === 'community',
       onClick: () => onSelectView('decks'),
-    },
-    {
-      id: 'community',
-      label: 'Kho thẻ',
-      icon: Globe,
-      active: activeView === 'community',
-      onClick: () => onSelectView('community'),
     },
     {
       id: 'practice',
@@ -48,8 +41,15 @@ export function MobileBottomNav({
       onClick: () => onSelectView('ai'),
     },
     {
+      id: 'missions',
+      label: 'Nhiệm vụ',
+      icon: Target,
+      active: activeView === 'missions',
+      onClick: () => onSelectView('missions'),
+    },
+    {
       id: 'leaderboard',
-      label: 'BXH & Chuỗi',
+      label: 'BXH',
       icon: Trophy,
       active: activeView === 'leaderboard',
       onClick: () => onSelectView('leaderboard'),

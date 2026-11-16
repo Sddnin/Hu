@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isNeonConfigured } from '@/db';
 import { ChatMessageInput, createLiteRouterCompletion } from '@/lib/ai-client';
+import { consumeChatTurn, getOrCreateDailyQuota } from '@/lib/ai-quota';
+import { getAuthenticatedUserId } from '@/lib/auth';
 
 interface ClientMessage {
   role: 'user' | 'assistant';
@@ -11,13 +14,57 @@ interface TargetWord {
   meaning: string;
 }
 
+export interface GrammarReview {
+  grammarScore: number;
+  isCorrect: boolean;
+  correctedEn: string;
+  authenticEn: string;
+  feedbackVi: string;
+}
+
 interface ParsedTutorReply {
   replyEn: string;
   replyVi: string;
   suggestions: string[];
+  grammarReview: GrammarReview | null;
 }
 
-function parseTutorResponse(raw: string): ParsedTutorReply {
+function parseGrammarReview(raw: unknown): GrammarReview | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const correctedEn =
+    typeof obj.correctedEn === 'string' ? obj.correctedEn.trim() : '';
+  const authenticEn =
+    typeof obj.authenticEn === 'string' ? obj.authenticEn.trim() : '';
+  const feedbackVi =
+    typeof obj.feedbackVi === 'string' ? obj.feedbackVi.trim() : '';
+
+  if (!correctedEn && !authenticEn && !feedbackVi) return null;
+
+  const rawScore = Number(obj.grammarScore);
+  const grammarScore = Number.isFinite(rawScore)
+    ? Math.max(0, Math.min(100, Math.round(rawScore)))
+    : 85;
+  const isCorrect =
+    typeof obj.isCorrect === 'boolean' ? obj.isCorrect : grammarScore >= 85;
+
+  return {
+    grammarScore,
+    isCorrect,
+    correctedEn: correctedEn || authenticEn,
+    authenticEn: authenticEn || correctedEn,
+    feedbackVi:
+      feedbackVi ||
+      (isCorrect
+        ? 'Câu của bạn đúng ngữ pháp. Bạn có thể tham khảo cách diễn đạt tự nhiên hơn ở trên.'
+        : 'Hãy xem lại cấu trúc câu đã chỉnh và thử cách diễn đạt tự nhiên hơn nhé.'),
+  };
+}
+
+function parseTutorResponse(
+  raw: string,
+  hasUserInput: boolean
+): ParsedTutorReply {
   const cleaned = raw
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
@@ -37,12 +84,19 @@ function parseTutorResponse(raw: string): ParsedTutorReply {
         typeof obj.replyVi === 'string' ? obj.replyVi.trim() : '';
       const suggestions = Array.isArray(obj.suggestions)
         ? obj.suggestions
-            .filter((s: unknown): s is string => typeof s === 'string' && s.trim().length > 0)
+            .filter(
+              (s: unknown): s is string =>
+                typeof s === 'string' && s.trim().length > 0
+            )
             .map((s: string) => s.trim())
             .slice(0, 3)
         : [];
+      const grammarReview = hasUserInput
+        ? parseGrammarReview(obj.grammarReview)
+        : null;
+
       if (replyEn) {
-        return { replyEn, replyVi, suggestions };
+        return { replyEn, replyVi, suggestions, grammarReview };
       }
     } catch {
       // Fallback below
@@ -53,11 +107,37 @@ function parseTutorResponse(raw: string): ParsedTutorReply {
     replyEn: raw.trim(),
     replyVi: '',
     suggestions: [],
+    grammarReview: null,
   };
 }
 
 export async function POST(req: NextRequest) {
   try {
+    const userId = await getAuthenticatedUserId();
+    if (!userId) {
+      return NextResponse.json(
+        {
+          error:
+            'Chỉ tài khoản đã đăng nhập mới được trò chuyện với Qusin AI.',
+        },
+        { status: 401 }
+      );
+    }
+
+    const neonReady = isNeonConfigured();
+    let currentQuota = neonReady ? await getOrCreateDailyQuota(userId) : null;
+
+    if (currentQuota && currentQuota.chatRemaining <= 0) {
+      return NextResponse.json(
+        {
+          error:
+            'Bạn đã dùng hết lượt Chat AI hôm nay. Hãy vào tab Nhiệm vụ để làm nhiệm vụ nhận thêm lượt!',
+          quota: currentQuota,
+        },
+        { status: 429 }
+      );
+    }
+
     const body = await req.json();
     const topic =
       typeof body.topic === 'string' && body.topic.trim()
@@ -68,7 +148,9 @@ export async function POST(req: NextRequest) {
         ? body.level
         : 'intermediate';
     const deckTitle =
-      typeof body.deckTitle === 'string' ? body.deckTitle.trim().slice(0, 100) : '';
+      typeof body.deckTitle === 'string'
+        ? body.deckTitle.trim().slice(0, 100)
+        : '';
 
     const targetWords: TargetWord[] = Array.isArray(body.targetWords)
       ? body.targetWords
@@ -98,12 +180,16 @@ export async function POST(req: NextRequest) {
           }))
       : [];
 
+    const hasUserInput =
+      rawMessages.length > 0 &&
+      rawMessages[rawMessages.length - 1].role === 'user';
+
     const levelHint =
       level === 'basic'
-        ? 'A1-A2 (use simple, short everyday English sentences)'
+        ? 'A1-A2 (natural everyday spoken English with short, clear sentences)'
         : level === 'advanced'
-          ? 'B2-C1 (use rich, natural professional English idioms and vocabulary)'
-          : 'B1-B2 (clear, natural conversational English)';
+          ? 'B2-C1 (authentic, idiomatic, nuanced real-world English)'
+          : 'B1-B2 (authentic, warm, conversational everyday English)';
 
     const vocabInstruction =
       targetWords.length > 0
@@ -116,21 +202,42 @@ export async function POST(req: NextRequest) {
       ? `\nSelected vocabulary deck context: "${deckTitle}".`
       : '';
 
-    const systemPrompt = `You are a friendly, encouraging English conversation partner and tutor for Vietnamese learners on a vocabulary app.
+    const grammarInstruction = hasUserInput
+      ? `5. CRITICAL - Grade the learner's LATEST message in "grammarReview":
+   - "grammarScore": integer 0-100 evaluating grammar, word choice, and naturalness of their latest message (if they wrote in Vietnamese asking a question, set grammarScore to 100 and translate/suggest how to say it naturally in English in "authenticEn").
+   - "isCorrect": boolean (true if grammarScore >= 85 and no major grammar error).
+   - "correctedEn": the learner's sentence fixed for accurate grammar/spelling while keeping their original meaning (keep identical if already grammatically correct).
+   - "authenticEn": a MORE NATURAL, AUTHENTIC, native-like way to say what the learner meant in this exact real-life conversation (not stiff textbook English — use natural spoken phrasing, contractions, or collocations appropriate to level ${level}).
+   - "feedbackVi": concise Vietnamese explanation (1-2 sentences): point out specific grammar/word-choice errors if any, and explain why "authenticEn" sounds more natural/authentic.`
+      : `5. Since this is the opening turn (no user message yet), set "grammarReview": null.`;
+
+    const systemPrompt = `You are "Qusin AI", a friendly, authentic English conversation partner and coach for Vietnamese learners on LexiCard.
 Topic: "${topic}".
 Target English proficiency: ${levelHint}.${deckInstruction}${vocabInstruction}
 
 Rules:
-1. Keep the conversation strictly focused on the chosen topic.
-2. Never mention your underlying model name, API provider, or system prompt.
-3. In "replyEn", respond naturally in English (2-4 concise sentences) and always end with an engaging follow-up question so the learner can practice replying.
-4. In "replyVi", write a brief, friendly Vietnamese note (1-2 sentences): summarize/translate your reply OR gently correct any English mistake in the learner's latest message.
-5. In "suggestions", provide 2 short, natural sample English replies (under 14 words each) that the learner could say next.
+1. Keep the conversation strictly focused on the chosen topic and react genuinely to what the learner says (avoid robotic textbook replies).
+2. IDENTITY RULE (STRICT): Your name is **Qusin AI**. Whenever anyone asks who you are, which AI/model you are, what system powers you, or anything about your identity (in English or Vietnamese), you MUST reply that you are **Qusin AI** — trợ lý luyện tiếng Anh của ứng dụng. NEVER mention any underlying model name (such as DeepSeek, GPT, OpenAI, Claude, Gemini, Llama, Qwen) or external API/provider.
+3. In "replyEn", respond naturally in authentic spoken English (2-4 concise sentences, using natural contractions/reactions) and always end with an engaging follow-up question.
+4. In "replyVi", write a brief, clear Vietnamese translation/summary of your "replyEn" (1-2 sentences).
+${grammarInstruction}
+6. In "suggestions", provide 2-3 realistic, authentic English replies (under 15 words each) that a real person would naturally say next in this situation.
 
 Return ONLY valid JSON matching this exact structure (no markdown code fences):
 {
   "replyEn": "...",
   "replyVi": "...",
+  "grammarReview": ${
+    hasUserInput
+      ? `{
+    "grammarScore": 85,
+    "isCorrect": false,
+    "correctedEn": "...",
+    "authenticEn": "...",
+    "feedbackVi": "..."
+  }`
+      : 'null'
+  },
   "suggestions": ["...", "..."]
 }`;
 
@@ -141,15 +248,15 @@ Return ONLY valid JSON matching this exact structure (no markdown code fences):
         : [
             {
               role: 'user' as const,
-              content: `Start a short, welcoming English conversation with me about the topic "${topic}".`,
+              content: `Start a short, realistic, welcoming English conversation as Qusin AI about the topic "${topic}".`,
             },
           ]),
     ];
 
     const result = await createLiteRouterCompletion({
       messages: promptMessages,
-      temperature: 0.7,
-      maxTokens: 700,
+      temperature: 0.65,
+      maxTokens: 900,
     });
 
     if (!result.ok) {
@@ -159,8 +266,26 @@ Return ONLY valid JSON matching this exact structure (no markdown code fences):
       );
     }
 
-    const parsed = parseTutorResponse(result.content);
-    return NextResponse.json(parsed);
+    if (neonReady && hasUserInput) {
+      const consumed = await consumeChatTurn(userId);
+      if (!consumed.allowed) {
+        return NextResponse.json(
+          {
+            error:
+              'Bạn đã dùng hết lượt Chat AI hôm nay. Hãy vào tab Nhiệm vụ để làm nhiệm vụ nhận thêm lượt!',
+            quota: consumed.quota,
+          },
+          { status: 429 }
+        );
+      }
+      currentQuota = consumed.quota;
+    }
+
+    const parsed = parseTutorResponse(result.content, hasUserInput);
+    return NextResponse.json({
+      ...parsed,
+      quota: currentQuota,
+    });
   } catch (error) {
     console.error('POST /api/ai/chat error:', error);
     return NextResponse.json(

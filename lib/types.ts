@@ -19,7 +19,25 @@ export type LeaderboardMode =
   | 'match_grid'
   | 'match_memory';
 
-export type AppView = 'decks' | 'community' | 'practice' | 'ai' | 'leaderboard';
+export type AppView =
+  | 'decks'
+  | 'community'
+  | 'practice'
+  | 'ai'
+  | 'missions'
+  | 'leaderboard';
+
+export interface AiQuotaSnapshot {
+  dateKey: string;
+  chatUsed: number;
+  chatBonus: number;
+  chatLimit: number;
+  chatRemaining: number;
+  speakUsed: number;
+  speakBonus: number;
+  speakLimit: number;
+  speakRemaining: number;
+}
 
 export interface Deck {
   id: string;
@@ -139,6 +157,8 @@ export const LIMITS = {
   PASSWORD_MAX: 128,
   DAILY_GOAL_MIN: 5,
   DAILY_GOAL_MAX: 200,
+  BASE_CHAT_LIMIT: 10,
+  BASE_SPEAK_LIMIT: 20,
 } as const;
 
 export const MODE_LABELS: Record<PracticeMode, string> = {

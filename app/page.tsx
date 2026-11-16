@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Globe, Layers } from 'lucide-react';
 import type { AccountTab } from '@/components/AccountModal';
 import { Header } from '@/components/Header';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
@@ -9,6 +10,7 @@ import { OfflineIndicator } from '@/components/PWAControls';
 import { WorkspaceToolbar } from '@/components/WorkspaceToolbar';
 import type { PracticePoolFilter } from '@/components/PracticeArena';
 import { useFlashcardStore } from '@/hooks/use-flashcard-store';
+import type { MissionTargetAction } from '@/lib/missions';
 import { AppView, PracticeMode, StudySession, getTodayDateKey } from '@/lib/types';
 
 const ScreenLoading = () => (
@@ -49,6 +51,10 @@ const LeaderboardStreakView = dynamic(
     import('@/components/LeaderboardStreakView').then(
       (mod) => mod.LeaderboardStreakView
     ),
+  { loading: ScreenLoading }
+);
+const MissionsView = dynamic(
+  () => import('@/components/MissionsView').then((mod) => mod.MissionsView),
   { loading: ScreenLoading }
 );
 const PracticeArena = dynamic(
@@ -176,6 +182,31 @@ export default function HomePage() {
     setActiveView('practice');
   }
 
+  function handleMissionAction(action: MissionTargetAction) {
+    if (action === 'login') {
+      handleOpenAuth();
+      return;
+    }
+    if (action === 'decks') {
+      setActiveView('decks');
+      return;
+    }
+    const targetDeckId = effectiveSelectedDeckId;
+    if (!targetDeckId) {
+      setActiveView('decks');
+      return;
+    }
+    if (action === 'practice_game') {
+      handleStartPractice(targetDeckId, 'blast');
+    } else if (action === 'practice_quiz') {
+      handleStartPractice(targetDeckId, 'quiz');
+    } else if (action === 'practice_speak_or_test') {
+      handleStartPractice(targetDeckId, store.user ? 'speak' : 'test');
+    } else {
+      handleStartQuickPractice();
+    }
+  }
+
   return (
     <div className="min-h-screen flex flex-col pb-16 md:pb-0">
       <Header
@@ -208,44 +239,85 @@ export default function HomePage() {
               <div className="h-96 rounded-xl bg-slate-200/70 dark:bg-slate-900 lg:col-span-8" />
             </div>
           </div>
-        ) : activeView === 'decks' ? (
-          <DecksView
-            user={store.user}
-            decks={store.decks}
-            cardsByDeck={store.cardsByDeck}
-            selectedDeckId={effectiveSelectedDeckId}
-            onSelectDeck={setSelectedDeckId}
-            onStartPractice={handleStartPractice}
-            onCreateDeck={store.createDeck}
-            onUpdateDeck={store.updateDeck}
-            onDeleteDeck={store.deleteDeck}
-            onResetDeck={store.resetDeckProgress}
-            onDuplicateDeck={store.duplicateDeck}
-            onAddCard={store.addCard}
-            onBulkAddCards={store.bulkAddCards}
-            onUpdateCard={store.updateCard}
-            onDeleteCard={store.deleteCard}
-            onToggleStar={store.toggleCardStar}
-            onPublishDeckToCommunity={store.publishDeckToCommunity}
-            onGoToCommunity={() => setActiveView('community')}
-            onOpenAuth={handleOpenAuth}
-          />
-        ) : activeView === 'community' ? (
-          <CommunityView
-            user={store.user}
-            neonConfigured={store.neonConfigured}
-            communityDecks={store.communityDecks}
-            myDecks={store.decks}
-            myCardsByDeck={store.cardsByDeck}
-            leaderboardEntries={store.leaderboardEntries}
-            onPublishDeck={store.publishDeckToCommunity}
-            onUnpublishDeck={store.unpublishCommunityDeck}
-            onImportDeck={store.importCommunityDeck}
-            onStartPracticeDeck={(deckId, mode) =>
-              handleStartPractice(deckId, mode || 'flip')
-            }
-            onOpenAuth={handleOpenAuth}
-          />
+        ) : activeView === 'decks' || activeView === 'community' ? (
+          <div>
+            <div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6">
+              <div
+                role="tablist"
+                aria-label="Phân mục Bộ thẻ và Kho thẻ"
+                className="inline-flex w-full max-w-md rounded-2xl border border-slate-200 bg-slate-100/90 p-1 dark:border-slate-800 dark:bg-slate-900"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeView === 'decks'}
+                  onClick={() => setActiveView('decks')}
+                  className={`flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors sm:text-sm cursor-pointer ${
+                    activeView === 'decks'
+                      ? 'bg-white text-sky-700 shadow-xs dark:bg-slate-800 dark:text-sky-400'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  <Layers className="h-4 w-4" aria-hidden="true" />
+                  <span>Bộ thẻ của tôi</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeView === 'community'}
+                  onClick={() => setActiveView('community')}
+                  className={`flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors sm:text-sm cursor-pointer ${
+                    activeView === 'community'
+                      ? 'bg-white text-sky-700 shadow-xs dark:bg-slate-800 dark:text-sky-400'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  <Globe className="h-4 w-4" aria-hidden="true" />
+                  <span>Kho thẻ cộng đồng</span>
+                </button>
+              </div>
+            </div>
+
+            {activeView === 'decks' ? (
+              <DecksView
+                user={store.user}
+                decks={store.decks}
+                cardsByDeck={store.cardsByDeck}
+                selectedDeckId={effectiveSelectedDeckId}
+                onSelectDeck={setSelectedDeckId}
+                onStartPractice={handleStartPractice}
+                onCreateDeck={store.createDeck}
+                onUpdateDeck={store.updateDeck}
+                onDeleteDeck={store.deleteDeck}
+                onResetDeck={store.resetDeckProgress}
+                onDuplicateDeck={store.duplicateDeck}
+                onAddCard={store.addCard}
+                onBulkAddCards={store.bulkAddCards}
+                onUpdateCard={store.updateCard}
+                onDeleteCard={store.deleteCard}
+                onToggleStar={store.toggleCardStar}
+                onPublishDeckToCommunity={store.publishDeckToCommunity}
+                onGoToCommunity={() => setActiveView('community')}
+                onOpenAuth={handleOpenAuth}
+              />
+            ) : (
+              <CommunityView
+                user={store.user}
+                neonConfigured={store.neonConfigured}
+                communityDecks={store.communityDecks}
+                myDecks={store.decks}
+                myCardsByDeck={store.cardsByDeck}
+                leaderboardEntries={store.leaderboardEntries}
+                onPublishDeck={store.publishDeckToCommunity}
+                onUnpublishDeck={store.unpublishCommunityDeck}
+                onImportDeck={store.importCommunityDeck}
+                onStartPracticeDeck={(deckId, mode) =>
+                  handleStartPractice(deckId, mode || 'flip')
+                }
+                onOpenAuth={handleOpenAuth}
+              />
+            )}
+          </div>
         ) : activeView === 'practice' ? (
           <PracticeArena
             user={store.user}
@@ -267,12 +339,38 @@ export default function HomePage() {
             onOpenAuth={handleOpenAuth}
             onViewLeaderboard={() => setActiveView('leaderboard')}
             onBackToDecks={() => setActiveView('decks')}
+            aiQuota={store.aiQuota}
+            onUpdateAiQuota={store.updateAiQuota}
+            onGoToMissions={() => setActiveView('missions')}
           />
         ) : activeView === 'ai' ? (
           <AiTutorView
+            user={store.user}
             decks={store.decks}
             cardsByDeck={store.cardsByDeck}
             allCards={store.cards}
+            aiQuota={store.aiQuota}
+            onUpdateQuota={store.updateAiQuota}
+            onOpenAuth={handleOpenAuth}
+            onGoToMissions={() => setActiveView('missions')}
+          />
+        ) : activeView === 'missions' ? (
+          <MissionsView
+            user={store.user}
+            cards={store.cards}
+            sessions={store.sessions}
+            dailyGoal={store.dailyGoal}
+            aiQuota={store.aiQuota}
+            claimedMissionIds={store.claimedMissionIds}
+            loading={store.missionsLoading}
+            onRefresh={store.refreshMissionsAndQuota}
+            onClaimMission={store.claimMission}
+            onExecuteAction={handleMissionAction}
+            onOpenChatAi={() => setActiveView('ai')}
+            onOpenSpeakPractice={() =>
+              handleStartPractice(effectiveSelectedDeckId, 'speak')
+            }
+            onOpenAuth={handleOpenAuth}
           />
         ) : (
           <LeaderboardStreakView

@@ -9,10 +9,10 @@ interface HeaderProps {
 }
 
 const NAV_ITEMS: Array<{ id: AppView; label: string }> = [
-  { id: 'decks', label: 'Bộ thẻ' },
-  { id: 'community', label: 'Kho thẻ' },
+  { id: 'decks', label: 'Bộ thẻ & Kho' },
   { id: 'practice', label: 'Luyện tập' },
   { id: 'ai', label: 'Chat AI' },
+  { id: 'missions', label: 'Nhiệm vụ' },
   { id: 'leaderboard', label: 'BXH & Chuỗi' },
 ];
 
@@ -37,7 +37,10 @@ export function Header({
           className="hidden md:flex items-center gap-7"
         >
           {NAV_ITEMS.map((item) => {
-            const isActive = activeView === item.id;
+            const isActive =
+              item.id === 'decks'
+                ? activeView === 'decks' || activeView === 'community'
+                : activeView === item.id;
             return (
               <button
                 key={item.id}
