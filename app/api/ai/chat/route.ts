@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isNeonConfigured } from '@/db';
 import { ChatMessageInput, createLiteRouterCompletion } from '@/lib/ai-client';
+import { GrammarReview, upsertAiChatTurn } from '@/lib/ai-history';
 import { consumeChatTurn, getOrCreateDailyQuota } from '@/lib/ai-quota';
 import { getAuthenticatedUserId } from '@/lib/auth';
+
+export type { GrammarReview };
 
 interface ClientMessage {
   role: 'user' | 'assistant';
@@ -12,14 +15,6 @@ interface ClientMessage {
 interface TargetWord {
   term: string;
   meaning: string;
-}
-
-export interface GrammarReview {
-  grammarScore: number;
-  isCorrect: boolean;
-  correctedEn: string;
-  authenticEn: string;
-  feedbackVi: string;
 }
 
 interface ParsedTutorReply {
@@ -139,6 +134,10 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+    const sessionId =
+      typeof body.sessionId === 'string' && body.sessionId.trim()
+        ? body.sessionId.trim().slice(0, 80)
+        : undefined;
     const topic =
       typeof body.topic === 'string' && body.topic.trim()
         ? body.topic.trim().slice(0, 120)
@@ -282,8 +281,41 @@ Return ONLY valid JSON matching this exact structure (no markdown code fences):
     }
 
     const parsed = parseTutorResponse(result.content, hasUserInput);
+
+    let savedSessionSummary = null;
+    if (neonReady) {
+      try {
+        const latestUserText = hasUserInput
+          ? rawMessages[rawMessages.length - 1].content
+          : undefined;
+        const saved = await upsertAiChatTurn({
+          userId,
+          sessionId,
+          topic,
+          level,
+          deckTitle,
+          latestUserText,
+          botReply: parsed,
+        });
+        savedSessionSummary = {
+          id: saved.id,
+          topic: saved.topic,
+          level: saved.level,
+          deckTitle: saved.deckTitle,
+          messageCount: saved.messageCount,
+          previewText: saved.previewText,
+          createdAt: saved.createdAt,
+          updatedAt: saved.updatedAt,
+        };
+      } catch (saveErr) {
+        console.error('Failed to persist AI chat history:', saveErr);
+      }
+    }
+
     return NextResponse.json({
       ...parsed,
+      sessionId: savedSessionSummary?.id || sessionId || null,
+      sessionSummary: savedSessionSummary,
       quota: currentQuota,
     });
   } catch (error) {

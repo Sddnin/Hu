@@ -160,3 +160,23 @@ export const userMissionClaims = pgTable(
   (table) => [index('user_mission_claims_user_date_idx').on(table.userId, table.dateKey)]
 );
 
+export const aiChatSessions = pgTable(
+  'ai_chat_sessions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    topic: text('topic').notNull(),
+    level: text('level').notNull().default('intermediate'),
+    deckTitle: text('deck_title').notNull().default(''),
+    messagesJson: text('messages_json').notNull().default('[]'),
+    messageCount: integer('message_count').notNull().default(0),
+    previewText: text('preview_text').notNull().default(''),
+    createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+    updatedAt: bigint('updated_at', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('ai_chat_sessions_user_updated_idx').on(table.userId, table.updatedAt),
+  ]
+);

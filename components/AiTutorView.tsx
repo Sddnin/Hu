@@ -1,24 +1,36 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   BookOpen,
   Bot,
   CheckCircle2,
+  Clock,
+  History,
   Lightbulb,
   Lock,
   LogIn,
   MessageSquare,
   Mic,
   MicOff,
+  Plus,
   RefreshCw,
   Send,
   SlidersHorizontal,
   Sparkles,
   Target,
+  Trash2,
   Volume2,
+  X,
 } from 'lucide-react';
+import type {
+  AiChatSessionDetail,
+  AiChatSessionSummary,
+  GrammarReview,
+  TutorLevel,
+  TutorMessage,
+} from '@/lib/ai-history';
 import { speakEnglish } from '@/lib/speech';
 import { AiQuotaSnapshot, AuthUser, Deck, Flashcard } from '@/lib/types';
 
@@ -32,25 +44,6 @@ interface AiTutorViewProps {
   onOpenAuth: () => void;
   onGoToMissions: () => void;
 }
-
-interface GrammarReview {
-  grammarScore: number;
-  isCorrect: boolean;
-  correctedEn: string;
-  authenticEn: string;
-  feedbackVi: string;
-}
-
-interface TutorMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  replyEn: string;
-  replyVi?: string;
-  suggestions?: string[];
-  grammarReview?: GrammarReview | null;
-}
-
-type TutorLevel = 'basic' | 'intermediate' | 'advanced';
 
 interface PresetTopic {
   id: string;
@@ -66,6 +59,12 @@ const PRESET_TOPICS: PresetTopic[] = [
   { id: 'social', title: 'Bạn bè & Sở thích', promptTopic: 'Making friends, hobbies, movies, and music' },
   { id: 'study', title: 'Học tập & Học thuật', promptTopic: 'Studying abroad, exams, and university life' },
 ];
+
+const LEVEL_BADGE: Record<TutorLevel, string> = {
+  basic: 'A1–A2',
+  intermediate: 'B1–B2',
+  advanced: 'C1',
+};
 
 interface SpeechRecognitionAlternativeLike {
   transcript: string;
@@ -118,6 +117,19 @@ function renderFormattedEnglish(text: string) {
   });
 }
 
+function formatChatTime(ts: number): string {
+  try {
+    return new Intl.DateTimeFormat('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(ts));
+  } catch {
+    return '';
+  }
+}
+
 export function AiTutorView({
   user,
   decks,
@@ -137,6 +149,7 @@ export function AiTutorView({
   const [autoSpeak, setAutoSpeak] = useState(true);
   const [showOptions, setShowOptions] = useState(false);
 
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<TutorMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -146,9 +159,19 @@ export function AiTutorView({
     () => getSpeechRecognitionConstructor() !== null
   );
 
+  // Chat history state
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historySessions, setHistorySessions] = useState<
+    AiChatSessionSummary[]
+  >([]);
+  const [loadingSessionId, setLoadingSessionId] = useState<string | null>(null);
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
+
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const msgSeqRef = useRef(0);
+  const loadedUserIdRef = useRef<string | null>(null);
 
   const userTopicTags = useMemo(() => {
     const counts = new Map<string, { tag: string; count: number }>();
@@ -184,6 +207,18 @@ export function AiTutorView({
     return decks.find((d) => d.id === selectedDeckId)?.title || '';
   }, [selectedDeckId, decks]);
 
+  const applyTopicLabel = useCallback((topicStr: string) => {
+    const matchedPreset = PRESET_TOPICS.find(
+      (p) => p.title === topicStr || p.promptTopic === topicStr
+    );
+    if (matchedPreset) {
+      setCustomTopic('');
+      setSelectedTopic(matchedPreset.promptTopic);
+    } else {
+      setCustomTopic(topicStr);
+    }
+  }, []);
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
@@ -198,14 +233,128 @@ export function AiTutorView({
     };
   }, []);
 
+  // Load saved AI chat history when user logs in
+  const userId = user?.id || null;
+  useEffect(() => {
+    if (!userId) {
+      loadedUserIdRef.current = null;
+      return;
+    }
+    if (loadedUserIdRef.current === userId) return;
+    loadedUserIdRef.current = userId;
+
+    let cancelled = false;
+    async function loadInitialHistory() {
+      setHistoryLoading(true);
+      try {
+        const res = await fetch('/api/ai/history');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+
+        const sessionsList = Array.isArray(data.sessions)
+          ? (data.sessions as AiChatSessionSummary[])
+          : [];
+        setHistorySessions(sessionsList);
+
+        const latest = data.latestSession as AiChatSessionDetail | null;
+        if (latest && Array.isArray(latest.messages) && latest.messages.length > 0) {
+          setCurrentSessionId(latest.id);
+          setMessages(latest.messages);
+          setLevel(latest.level);
+          applyTopicLabel(latest.topic);
+        }
+      } catch {
+        // Non-blocking history load
+      } finally {
+        if (!cancelled) {
+          setHistoryLoading(false);
+        }
+      }
+    }
+
+    void loadInitialHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, applyTopicLabel]);
+
+  async function handleSelectHistorySession(sessionId: string) {
+    if (loading || loadingSessionId === sessionId) return;
+    setLoadingSessionId(sessionId);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/ai/history?sessionId=${encodeURIComponent(sessionId)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.session) {
+        setError(data.error || 'Không thể tải cuộc trò chuyện này.');
+        return;
+      }
+      const detail = data.session as AiChatSessionDetail;
+      setCurrentSessionId(detail.id);
+      setMessages(detail.messages || []);
+      setLevel(detail.level);
+      applyTopicLabel(detail.topic);
+      setShowHistory(false);
+    } catch {
+      setError('Mất kết nối khi tải lịch sử trò chuyện.');
+    } finally {
+      setLoadingSessionId(null);
+    }
+  }
+
+  async function handleDeleteHistorySession(sessionId: string) {
+    try {
+      const res = await fetch(
+        `/api/ai/history?sessionId=${encodeURIComponent(sessionId)}`,
+        { method: 'DELETE' }
+      );
+      if (!res.ok) return;
+      setHistorySessions((prev) => prev.filter((s) => s.id !== sessionId));
+      if (currentSessionId === sessionId) {
+        setCurrentSessionId(null);
+        setMessages([]);
+      }
+    } catch {
+      // Ignore transient error
+    }
+  }
+
+  async function handleClearAllHistory() {
+    try {
+      const res = await fetch('/api/ai/history?all=1', { method: 'DELETE' });
+      if (!res.ok) return;
+      setHistorySessions([]);
+      setCurrentSessionId(null);
+      setMessages([]);
+      setConfirmClearAll(false);
+    } catch {
+      // Ignore transient error
+    }
+  }
+
+  function handleNewBlankConversation() {
+    setCurrentSessionId(null);
+    setMessages([]);
+    setError(null);
+    setShowHistory(false);
+  }
+
   async function requestTutorReply(
     historyForApi: Array<{ role: 'user' | 'assistant'; content: string }>,
-    topicOverride?: string
+    options?: { topicOverride?: string; sessionIdOverride?: string | null }
   ) {
     if (!user) {
       onOpenAuth();
       return;
     }
+
+    const activeSessId =
+      options && 'sessionIdOverride' in options
+        ? options.sessionIdOverride
+        : currentSessionId;
 
     setError(null);
     setLoading(true);
@@ -214,7 +363,8 @@ export function AiTutorView({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          topic: topicOverride || activeTopicLabel,
+          sessionId: activeSessId || undefined,
+          topic: options?.topicOverride || activeTopicLabel,
           level,
           deckTitle: activeDeckTitle,
           targetWords,
@@ -228,6 +378,17 @@ export function AiTutorView({
       if (!res.ok) {
         setError(data.error || 'Không thể kết nối tới Qusin AI.');
         return;
+      }
+
+      if (typeof data.sessionId === 'string' && data.sessionId) {
+        setCurrentSessionId(data.sessionId);
+      }
+      if (data.sessionSummary) {
+        const summary = data.sessionSummary as AiChatSessionSummary;
+        setHistorySessions((prev) => [
+          summary,
+          ...prev.filter((item) => item.id !== summary.id),
+        ]);
       }
 
       msgSeqRef.current += 1;
@@ -261,8 +422,12 @@ export function AiTutorView({
     }
     const resolvedTopic = topicToStart || activeTopicLabel;
     if (!resolvedTopic.trim()) return;
+    setCurrentSessionId(null);
     setMessages([]);
-    await requestTutorReply([], resolvedTopic);
+    await requestTutorReply([], {
+      topicOverride: resolvedTopic,
+      sessionIdOverride: null,
+    });
   }
 
   async function sendUserMessage(rawContent: string) {
@@ -367,9 +532,9 @@ export function AiTutorView({
             Đăng nhập để trò chuyện cùng Qusin AI
           </h1>
           <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-400">
-            Chỉ tài khoản đã đăng nhập mới được sử dụng tính năng Chat AI. Mỗi tài khoản nhận sẵn{' '}
+            Chỉ tài khoản đã đăng nhập mới được sử dụng tính năng Chat AI và lưu lịch sử hội thoại. Mỗi tài khoản nhận sẵn{' '}
             <strong className="text-slate-900 dark:text-slate-100">10 lượt chat</strong> và{' '}
-            <strong className="text-slate-900 dark:text-slate-100">20 lượt luyện nói</strong> mỗi ngày, kèm nhiệm vụ hằng ngày để nhận thêm lượt miễn phí!
+            <strong className="text-slate-900 dark:text-slate-100">20 lượt luyện nói</strong> mỗi ngày!
           </p>
 
           <div className="mt-6 flex flex-col justify-center gap-2.5 sm:flex-row">
@@ -398,7 +563,7 @@ export function AiTutorView({
   const outOfChatTurns = aiQuota.chatRemaining <= 0;
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-5 sm:px-6 sm:py-6">
+    <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-6">
       {/* Compact Header & Live Quota */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex items-center gap-2.5">
@@ -410,7 +575,7 @@ export function AiTutorView({
               Qusin AI · Hội thoại tiếng Anh
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Chấm ngữ pháp · Đề xuất câu nói tự nhiên, chân thực
+              Chấm ngữ pháp · Đề xuất câu tự nhiên · Tự lưu lịch sử
             </p>
           </div>
         </div>
@@ -435,6 +600,23 @@ export function AiTutorView({
           >
             <Target className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" aria-hidden="true" />
             <span>Thêm lượt</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowHistory((v) => !v);
+              setConfirmClearAll(false);
+            }}
+            aria-expanded={showHistory}
+            className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+              showHistory
+                ? 'border-sky-600 bg-sky-50 text-sky-700 dark:border-sky-500 dark:bg-sky-950/40 dark:text-sky-300'
+                : 'border-slate-200 bg-white text-slate-700 hover:border-sky-500 hover:text-sky-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'
+            }`}
+          >
+            <History className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Lịch sử ({historySessions.length})</span>
           </button>
 
           <button
@@ -529,6 +711,15 @@ export function AiTutorView({
 
           <button
             type="button"
+            onClick={handleNewBlankConversation}
+            className="inline-flex min-h-[36px] items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:border-sky-500 hover:text-sky-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>Cuộc mới</span>
+          </button>
+
+          <button
+            type="button"
             disabled={loading || outOfChatTurns}
             onClick={() => void handleStartTopicChat()}
             className="inline-flex min-h-[36px] items-center gap-1.5 rounded-xl bg-sky-600 px-3.5 py-1 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 cursor-pointer"
@@ -537,7 +728,7 @@ export function AiTutorView({
               className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}
               aria-hidden="true"
             />
-            <span>{messages.length > 0 ? 'Cuộc mới' : 'Mở đầu'}</span>
+            <span>AI mở lời</span>
           </button>
         </div>
 
@@ -588,100 +779,255 @@ export function AiTutorView({
         )}
       </div>
 
-      {/* Chat Thread Box */}
-      <section className="flex min-h-[480px] flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5 text-xs dark:border-slate-800 sm:px-5">
-          <span className="truncate font-semibold text-slate-800 dark:text-slate-200">
-            Chủ đề: {activeTopicLabel}
-            {activeDeckTitle ? ` · Bộ thẻ: ${activeDeckTitle}` : ''}
-          </span>
-          <span className="shrink-0 text-slate-500 dark:text-slate-400">
-            Qusin AI
-          </span>
-        </div>
-
-        <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5 max-h-[500px]">
-          {messages.length === 0 && !loading && (
-            <div className="flex h-full min-h-[290px] flex-col items-center justify-center text-center px-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-50 text-sky-600 dark:bg-sky-950/60 dark:text-sky-400">
-                <MessageSquare className="h-6 w-6" aria-hidden="true" />
+      {/* Main Split Area: Optional History Drawer + Chat Thread */}
+      <div
+        className={`grid gap-4 ${
+          showHistory ? 'grid-cols-1 lg:grid-cols-[300px_1fr]' : 'grid-cols-1'
+        }`}
+      >
+        {showHistory && (
+          <aside className="flex max-h-[560px] flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3.5 py-2.5 dark:border-slate-800">
+              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900 dark:text-slate-100">
+                <History className="h-4 w-4 text-sky-600 dark:text-sky-400" aria-hidden="true" />
+                <span>Lịch sử trò chuyện</span>
               </div>
-              <h3 className="mt-3 font-display text-base font-bold text-slate-900 dark:text-slate-100">
-                Trò chuyện cùng Qusin AI về “{activeTopicLabel}”
-              </h3>
-              <p className="mt-1 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-                Nhấn nút bên dưới để Qusin AI mở lời trước bằng tiếng Anh, hoặc gõ / nói trực tiếp câu chào của bạn.
-              </p>
-              <button
-                type="button"
-                disabled={outOfChatTurns}
-                onClick={() => void handleStartTopicChat()}
-                className="mt-4 inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 cursor-pointer"
-              >
-                <Sparkles className="h-4 w-4" aria-hidden="true" />
-                <span>Qusin AI mở đầu hội thoại</span>
-              </button>
+              <div className="flex items-center gap-1.5">
+                {historySessions.length > 0 && !confirmClearAll && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearAll(true)}
+                    className="text-[11px] font-semibold text-slate-500 hover:text-red-600 dark:text-slate-400 cursor-pointer"
+                  >
+                    Xóa hết
+                  </button>
+                )}
+                {confirmClearAll && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => void handleClearAllHistory()}
+                      className="rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-semibold text-white cursor-pointer"
+                    >
+                      Xác nhận
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearAll(false)}
+                      className="text-[11px] font-semibold text-slate-500 cursor-pointer"
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowHistory(false)}
+                  aria-label="Đóng lịch sử"
+                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 lg:hidden cursor-pointer"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
             </div>
-          )}
 
-          {messages.map((msg) =>
-            msg.role === 'user' ? (
-              <div key={msg.id} className="flex justify-end">
-                <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-sky-600 px-4 py-2.5 text-sm text-white dark:bg-sky-500 dark:text-slate-950">
-                  {msg.replyEn}
+            <div className="flex-1 space-y-1.5 overflow-y-auto p-2.5">
+              {historyLoading ? (
+                <p className="px-2 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
+                  Đang tải lịch sử hội thoại...
+                </p>
+              ) : historySessions.length === 0 ? (
+                <div className="px-3 py-8 text-center text-xs text-slate-500 dark:text-slate-400">
+                  Chưa có cuộc trò chuyện nào được lưu. Bắt đầu nhắn tin với Qusin AI để tự động lưu lại nhé!
+                </div>
+              ) : (
+                historySessions.map((item) => {
+                  const isActive = currentSessionId === item.id;
+                  const isLoadingItem = loadingSessionId === item.id;
+                  return (
+                    <div
+                      key={item.id}
+                      className={`group flex items-start justify-between gap-2 rounded-xl border p-2.5 transition-colors ${
+                        isActive
+                          ? 'border-sky-500 bg-sky-50/70 dark:border-sky-600 dark:bg-sky-950/30'
+                          : 'border-slate-200/80 bg-slate-50/50 hover:border-sky-300 dark:border-slate-800 dark:bg-slate-950/40'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        disabled={isLoadingItem}
+                        onClick={() => void handleSelectHistorySession(item.id)}
+                        className="min-w-0 flex-1 text-left cursor-pointer"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate text-xs font-bold text-slate-900 dark:text-slate-100">
+                            {item.topic}
+                          </span>
+                          <span className="shrink-0 rounded bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                            {LEVEL_BADGE[item.level] || 'B1–B2'}
+                          </span>
+                        </div>
+                        {item.previewText && (
+                          <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-600 dark:text-slate-400">
+                            {item.previewText}
+                          </p>
+                        )}
+                        <div className="mt-1.5 flex items-center gap-2 text-[10px] text-slate-400 dark:text-slate-500">
+                          <span className="inline-flex items-center gap-0.5">
+                            <Clock className="h-3 w-3" aria-hidden="true" />
+                            {formatChatTime(item.updatedAt)}
+                          </span>
+                          <span>· {item.messageCount} tin nhắn</span>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        title="Xóa cuộc trò chuyện"
+                        aria-label={`Xóa cuộc trò chuyện ${item.topic}`}
+                        onClick={() => void handleDeleteHistorySession(item.id)}
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </aside>
+        )}
+
+        {/* Chat Thread Box */}
+        <section className="flex min-h-[480px] flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5 text-xs dark:border-slate-800 sm:px-5">
+            <span className="truncate font-semibold text-slate-800 dark:text-slate-200">
+              Chủ đề: {activeTopicLabel}
+              {activeDeckTitle ? ` · Bộ thẻ: ${activeDeckTitle}` : ''}
+            </span>
+            <span className="shrink-0 text-slate-500 dark:text-slate-400">
+              {currentSessionId ? 'Đã lưu lịch sử' : 'Qusin AI'}
+            </span>
+          </div>
+
+          <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5 max-h-[500px]">
+            {messages.length === 0 && !loading && (
+              <div className="flex h-full min-h-[290px] flex-col items-center justify-center text-center px-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-50 text-sky-600 dark:bg-sky-950/60 dark:text-sky-400">
+                  <MessageSquare className="h-6 w-6" aria-hidden="true" />
+                </div>
+                <h3 className="mt-3 font-display text-base font-bold text-slate-900 dark:text-slate-100">
+                  Trò chuyện cùng Qusin AI về “{activeTopicLabel}”
+                </h3>
+                <p className="mt-1 max-w-md text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+                  Nhấn nút bên dưới để Qusin AI mở lời trước bằng tiếng Anh, hoặc gõ / nói trực tiếp câu chào của bạn. Toàn bộ cuộc hội thoại được tự động lưu vào Lịch sử.
+                </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  <button
+                    type="button"
+                    disabled={outOfChatTurns}
+                    onClick={() => void handleStartTopicChat()}
+                    className="inline-flex min-h-[42px] items-center gap-2 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 cursor-pointer"
+                  >
+                    <Sparkles className="h-4 w-4" aria-hidden="true" />
+                    <span>Qusin AI mở đầu hội thoại</span>
+                  </button>
+                  {historySessions.length > 0 && !showHistory && (
+                    <button
+                      type="button"
+                      onClick={() => setShowHistory(true)}
+                      className="inline-flex min-h-[42px] items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 cursor-pointer"
+                    >
+                      <History className="h-4 w-4" aria-hidden="true" />
+                      <span>Mở lại lịch sử ({historySessions.length})</span>
+                    </button>
+                  )}
                 </div>
               </div>
-            ) : (
-              <div key={msg.id} className="space-y-2">
-                {msg.grammarReview && (
-                  <div className="flex justify-end">
-                    <div className="max-w-[90%] rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-3 text-xs dark:border-emerald-900/50 dark:bg-emerald-950/20 sm:max-w-[85%]">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1 font-bold text-slate-800 dark:text-slate-100">
-                          <CheckCircle2
-                            className={`h-3.5 w-3.5 ${
-                              msg.grammarReview.grammarScore >= 85
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-amber-600 dark:text-amber-400'
-                            }`}
-                            aria-hidden="true"
-                          />
-                          <span>
-                            {msg.grammarReview.isCorrect
-                              ? 'Ngữ pháp chuẩn'
-                              : 'Góp ý ngữ pháp & diễn đạt'}
-                          </span>
-                        </span>
-                        <span
-                          className={`font-mono-tabular rounded-md px-2 py-0.5 text-[11px] font-bold ${
-                            msg.grammarReview.grammarScore >= 85
-                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
-                              : msg.grammarReview.grammarScore >= 65
-                                ? 'bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-300'
-                                : 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
-                          }`}
-                        >
-                          Ngữ pháp: {msg.grammarReview.grammarScore}%
-                        </span>
-                      </div>
+            )}
 
-                      {!msg.grammarReview.isCorrect &&
-                        msg.grammarReview.correctedEn && (
-                          <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-slate-200/80 bg-white px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-900">
+            {messages.map((msg) =>
+              msg.role === 'user' ? (
+                <div key={msg.id} className="flex justify-end">
+                  <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-sky-600 px-4 py-2.5 text-sm text-white dark:bg-sky-500 dark:text-slate-950">
+                    {msg.replyEn}
+                  </div>
+                </div>
+              ) : (
+                <div key={msg.id} className="space-y-2">
+                  {msg.grammarReview && (
+                    <div className="flex justify-end">
+                      <div className="max-w-[90%] rounded-xl border border-emerald-200/80 bg-emerald-50/50 p-3 text-xs dark:border-emerald-900/50 dark:bg-emerald-950/20 sm:max-w-[85%]">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1 font-bold text-slate-800 dark:text-slate-100">
+                            <CheckCircle2
+                              className={`h-3.5 w-3.5 ${
+                                msg.grammarReview.grammarScore >= 85
+                                  ? 'text-emerald-600 dark:text-emerald-400'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }`}
+                              aria-hidden="true"
+                            />
+                            <span>
+                              {msg.grammarReview.isCorrect
+                                ? 'Ngữ pháp chuẩn'
+                                : 'Góp ý ngữ pháp & diễn đạt'}
+                            </span>
+                          </span>
+                          <span
+                            className={`font-mono-tabular rounded-md px-2 py-0.5 text-[11px] font-bold ${
+                              msg.grammarReview.grammarScore >= 85
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
+                                : msg.grammarReview.grammarScore >= 65
+                                  ? 'bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-300'
+                                  : 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300'
+                            }`}
+                          >
+                            Ngữ pháp: {msg.grammarReview.grammarScore}%
+                          </span>
+                        </div>
+
+                        {!msg.grammarReview.isCorrect &&
+                          msg.grammarReview.correctedEn && (
+                            <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-slate-200/80 bg-white px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-900">
+                              <div className="min-w-0">
+                                <span className="font-semibold text-slate-500 dark:text-slate-400">
+                                  Sửa chuẩn:{' '}
+                                </span>
+                                <span className="font-medium text-slate-900 dark:text-slate-100">
+                                  “{msg.grammarReview.correctedEn}”
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  speakEnglish(msg.grammarReview!.correctedEn)
+                                }
+                                aria-label="Nghe câu đã sửa ngữ pháp"
+                                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-sky-600 dark:hover:bg-slate-800 cursor-pointer"
+                              >
+                                <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+                              </button>
+                            </div>
+                          )}
+
+                        {msg.grammarReview.authenticEn && (
+                          <div className="mt-1.5 flex items-center justify-between gap-2 rounded-lg border border-sky-200/80 bg-white px-2.5 py-1.5 dark:border-sky-900/50 dark:bg-slate-900">
                             <div className="min-w-0">
-                              <span className="font-semibold text-slate-500 dark:text-slate-400">
-                                Sửa chuẩn:{' '}
-                              </span>
-                              <span className="font-medium text-slate-900 dark:text-slate-100">
-                                “{msg.grammarReview.correctedEn}”
+                              <span className="inline-flex items-center gap-1 font-semibold text-sky-700 dark:text-sky-400">
+                                <Lightbulb className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                <span>Nói tự nhiên & chân thực hơn:</span>
+                              </span>{' '}
+                              <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                “{msg.grammarReview.authenticEn}”
                               </span>
                             </div>
                             <button
                               type="button"
                               onClick={() =>
-                                speakEnglish(msg.grammarReview!.correctedEn)
+                                speakEnglish(msg.grammarReview!.authenticEn)
                               }
-                              aria-label="Nghe câu đã sửa ngữ pháp"
+                              aria-label="Nghe câu nói tự nhiên hơn"
                               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-sky-600 dark:hover:bg-slate-800 cursor-pointer"
                             >
                               <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -689,173 +1035,150 @@ export function AiTutorView({
                           </div>
                         )}
 
-                      {msg.grammarReview.authenticEn && (
-                        <div className="mt-1.5 flex items-center justify-between gap-2 rounded-lg border border-sky-200/80 bg-white px-2.5 py-1.5 dark:border-sky-900/50 dark:bg-slate-900">
-                          <div className="min-w-0">
-                            <span className="inline-flex items-center gap-1 font-semibold text-sky-700 dark:text-sky-400">
-                              <Lightbulb className="h-3 w-3 shrink-0" aria-hidden="true" />
-                              <span>Nói tự nhiên & chân thực hơn:</span>
-                            </span>{' '}
-                            <span className="font-semibold text-slate-900 dark:text-slate-100">
-                              “{msg.grammarReview.authenticEn}”
-                            </span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              speakEnglish(msg.grammarReview!.authenticEn)
-                            }
-                            aria-label="Nghe câu nói tự nhiên hơn"
-                            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-sky-600 dark:hover:bg-slate-800 cursor-pointer"
-                          >
-                            <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
-                          </button>
-                        </div>
-                      )}
+                        {msg.grammarReview.feedbackVi && (
+                          <p className="mt-1.5 leading-relaxed text-slate-700 dark:text-slate-300">
+                            {msg.grammarReview.feedbackVi}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
-                      {msg.grammarReview.feedbackVi && (
-                        <p className="mt-1.5 leading-relaxed text-slate-700 dark:text-slate-300">
-                          {msg.grammarReview.feedbackVi}
+                  <div className="flex justify-start">
+                    <div className="max-w-[90%] space-y-2 rounded-2xl rounded-bl-sm border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-800 dark:bg-slate-950/70 sm:p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-sm leading-relaxed text-slate-900 dark:text-slate-100">
+                          {renderFormattedEnglish(msg.replyEn)}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            speakEnglish(msg.replyEn.replace(/\*\*/g, ''))
+                          }
+                          title="Nghe phát âm tiếng Anh"
+                          aria-label="Nghe câu trả lời tiếng Anh"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-sky-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 cursor-pointer"
+                        >
+                          <Volume2 className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
+
+                      {msg.replyVi && (
+                        <p className="border-t border-slate-200/80 pt-2 text-xs leading-relaxed text-slate-600 dark:border-slate-800 dark:text-slate-400">
+                          {msg.replyVi}
                         </p>
                       )}
+
+                      {msg.suggestions && msg.suggestions.length > 0 && (
+                        <div className="pt-1 flex flex-wrap gap-1.5">
+                          {msg.suggestions.map((sug, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              disabled={loading || outOfChatTurns}
+                              onClick={() => void sendUserMessage(sug)}
+                              className="rounded-lg border border-sky-200 bg-white px-2.5 py-1 text-left text-xs font-medium text-sky-700 transition-colors hover:bg-sky-50 disabled:opacity-50 dark:border-sky-900 dark:bg-slate-900 dark:text-sky-300 dark:hover:bg-sky-950/50 cursor-pointer"
+                            >
+                              “{sug}”
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
-
-                <div className="flex justify-start">
-                  <div className="max-w-[90%] space-y-2 rounded-2xl rounded-bl-sm border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-800 dark:bg-slate-950/70 sm:p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="text-sm leading-relaxed text-slate-900 dark:text-slate-100">
-                        {renderFormattedEnglish(msg.replyEn)}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          speakEnglish(msg.replyEn.replace(/\*\*/g, ''))
-                        }
-                        title="Nghe phát âm tiếng Anh"
-                        aria-label="Nghe câu trả lời tiếng Anh"
-                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:text-sky-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 cursor-pointer"
-                      >
-                        <Volume2 className="h-4 w-4" aria-hidden="true" />
-                      </button>
-                    </div>
-
-                    {msg.replyVi && (
-                      <p className="border-t border-slate-200/80 pt-2 text-xs leading-relaxed text-slate-600 dark:border-slate-800 dark:text-slate-400">
-                        {msg.replyVi}
-                      </p>
-                    )}
-
-                    {msg.suggestions && msg.suggestions.length > 0 && (
-                      <div className="pt-1 flex flex-wrap gap-1.5">
-                        {msg.suggestions.map((sug, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            disabled={loading || outOfChatTurns}
-                            onClick={() => void sendUserMessage(sug)}
-                            className="rounded-lg border border-sky-200 bg-white px-2.5 py-1 text-left text-xs font-medium text-sky-700 transition-colors hover:bg-sky-50 disabled:opacity-50 dark:border-sky-900 dark:bg-slate-900 dark:text-sky-300 dark:hover:bg-sky-950/50 cursor-pointer"
-                          >
-                            “{sug}”
-                          </button>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 </div>
-              </div>
-            )
-          )}
+              )
+            )}
 
-          {loading && (
-            <div className="flex justify-start">
-              <div className="rounded-2xl rounded-bl-sm border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-400">
-                Qusin AI đang phản hồi...
+            {loading && (
+              <div className="flex justify-start">
+                <div className="rounded-2xl rounded-bl-sm border border-slate-200 bg-slate-50 px-4 py-3 text-xs font-medium text-slate-500 dark:border-slate-800 dark:bg-slate-950/70 dark:text-slate-400">
+                  Qusin AI đang phản hồi...
+                </div>
               </div>
+            )}
+
+            <div ref={chatEndRef} />
+          </div>
+
+          {outOfChatTurns && (
+            <div className="mx-4 mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+              <span>
+                Bạn đã hết lượt Chat Qusin AI hôm nay ({aiQuota.chatUsed}/
+                {aiQuota.chatLimit}). Làm nhiệm vụ hằng ngày để nhận thêm lượt ngay!
+              </span>
+              <button
+                type="button"
+                onClick={onGoToMissions}
+                className="font-bold text-sky-700 underline hover:no-underline dark:text-sky-400 cursor-pointer whitespace-nowrap"
+              >
+                Mở tab Nhiệm vụ →
+              </button>
             </div>
           )}
 
-          <div ref={chatEndRef} />
-        </div>
+          {error && (
+            <div className="mx-4 mb-2 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+          )}
 
-        {outOfChatTurns && (
-          <div className="mx-4 mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-            <span>
-              Bạn đã hết lượt Chat Qusin AI hôm nay ({aiQuota.chatUsed}/
-              {aiQuota.chatLimit}). Làm nhiệm vụ hằng ngày để nhận thêm lượt ngay!
-            </span>
+          <form
+            onSubmit={handleFormSubmit}
+            className="flex items-center gap-2 border-t border-slate-200 p-3 dark:border-slate-800 sm:p-4"
+          >
             <button
               type="button"
-              onClick={onGoToMissions}
-              className="font-bold text-sky-700 underline hover:no-underline dark:text-sky-400 cursor-pointer whitespace-nowrap"
+              disabled={outOfChatTurns}
+              onClick={toggleVoiceInput}
+              title={
+                speechSupported
+                  ? listening
+                    ? 'Dừng ghi âm'
+                    : 'Nói bằng tiếng Anh'
+                  : 'Trình duyệt không hỗ trợ Web Speech'
+              }
+              aria-label="Nhập bằng giọng nói"
+              className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-colors cursor-pointer disabled:opacity-50 ${
+                listening
+                  ? 'border-red-500 bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
+                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300'
+              }`}
             >
-              Mở tab Nhiệm vụ →
+              {listening ? (
+                <MicOff className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <Mic className="h-4 w-4" aria-hidden="true" />
+              )}
             </button>
-          </div>
-        )}
 
-        {error && (
-          <div className="mx-4 mb-2 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        )}
+            <input
+              type="text"
+              disabled={outOfChatTurns}
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder={
+                outOfChatTurns
+                  ? 'Đã hết lượt chat hôm nay — vào Nhiệm vụ để nhận thêm lượt'
+                  : listening
+                    ? 'Đang nghe tiếng Anh...'
+                    : 'Nhập câu trả lời bằng tiếng Anh (hoặc hỏi Qusin AI)...'
+              }
+              className="min-h-[44px] flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
 
-        <form
-          onSubmit={handleFormSubmit}
-          className="flex items-center gap-2 border-t border-slate-200 p-3 dark:border-slate-800 sm:p-4"
-        >
-          <button
-            type="button"
-            disabled={outOfChatTurns}
-            onClick={toggleVoiceInput}
-            title={
-              speechSupported
-                ? listening
-                  ? 'Dừng ghi âm'
-                  : 'Nói bằng tiếng Anh'
-                : 'Trình duyệt không hỗ trợ Web Speech'
-            }
-            aria-label="Nhập bằng giọng nói"
-            className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition-colors cursor-pointer disabled:opacity-50 ${
-              listening
-                ? 'border-red-500 bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400'
-                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300'
-            }`}
-          >
-            {listening ? (
-              <MicOff className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <Mic className="h-4 w-4" aria-hidden="true" />
-            )}
-          </button>
-
-          <input
-            type="text"
-            disabled={outOfChatTurns}
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
-            placeholder={
-              outOfChatTurns
-                ? 'Đã hết lượt chat hôm nay — vào Nhiệm vụ để nhận thêm lượt'
-                : listening
-                  ? 'Đang nghe tiếng Anh...'
-                  : 'Nhập câu trả lời bằng tiếng Anh (hoặc hỏi Qusin AI)...'
-            }
-            className="min-h-[44px] flex-1 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 focus:border-sky-600 focus:outline-none disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-          />
-
-          <button
-            type="submit"
-            disabled={loading || outOfChatTurns || !inputText.trim()}
-            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 cursor-pointer"
-          >
-            <Send className="h-4 w-4" aria-hidden="true" />
-            <span className="hidden sm:inline">Gửi</span>
-          </button>
-        </form>
-      </section>
+            <button
+              type="submit"
+              disabled={loading || outOfChatTurns || !inputText.trim()}
+              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 cursor-pointer"
+            >
+              <Send className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Gửi</span>
+            </button>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }

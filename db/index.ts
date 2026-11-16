@@ -218,6 +218,25 @@ export async function ensureNeonSchema(): Promise<void> {
       await sql`
         CREATE INDEX IF NOT EXISTS user_mission_claims_user_date_idx ON user_mission_claims (user_id, date_key)
       `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS ai_chat_sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          topic TEXT NOT NULL,
+          level TEXT NOT NULL DEFAULT 'intermediate',
+          deck_title TEXT NOT NULL DEFAULT '',
+          messages_json TEXT NOT NULL DEFAULT '[]',
+          message_count INTEGER NOT NULL DEFAULT 0,
+          preview_text TEXT NOT NULL DEFAULT '',
+          created_at BIGINT NOT NULL,
+          updated_at BIGINT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE INDEX IF NOT EXISTS ai_chat_sessions_user_updated_idx ON ai_chat_sessions (user_id, updated_at DESC)
+      `;
     })().catch((err) => {
       globalThis._neonSchemaPromise = undefined;
       throw err;
