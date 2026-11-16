@@ -7,6 +7,7 @@ export interface ChatMessageInput {
 
 const DEFAULT_BASE_URL = 'https://literouter.fun/api/v1';
 const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
+const DEFAULT_GEMINI_MODEL = 'gemini-4-hydrogen';
 
 function getValidGeminiKey(): string | null {
   const key = process.env.GEMINI_API_KEY?.trim();
@@ -173,8 +174,9 @@ async function createGeminiTextFallback(
       ? `${systemParts}\n\n---\n${conversation}`
       : conversation;
 
+    const geminiModel = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
     const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+      model: geminiModel,
       contents: prompt,
     });
 
@@ -203,7 +205,10 @@ async function tryGeminiAudioTranscription(
   mimeType: string
 ): Promise<{ ok: true; transcript: string } | { ok: false; detail: string }> {
   const ai = createGeminiClient(geminiKey);
-  const modelsToTry = ['gemini-3.5-transcribe', 'gemini-2.5-flash'];
+  const primaryModel = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const modelsToTry = Array.from(
+    new Set([primaryModel, 'gemini-3.5-transcribe'])
+  );
   let lastDetail = '';
 
   for (const model of modelsToTry) {
@@ -377,7 +382,7 @@ export async function transcribeAudioWithAI(params: {
     process.env.LITEROUTER_BASE_URL?.trim() || DEFAULT_BASE_URL
   ).replace(/\/+$/, '');
 
-  // 1. Gemini audio transcription (gemini-3.5-transcribe -> gemini-2.5-flash fallback)
+  // 1. Gemini audio transcription (gemini-4-hydrogen primary)
   let geminiFailure = '';
   if (geminiKey) {
     const geminiRes = await tryGeminiAudioTranscription(
@@ -437,7 +442,7 @@ export async function transcribeAudioWithAI(params: {
     if (audioFormat) {
       const candidates = [
         process.env.LITEROUTER_AUDIO_MODEL?.trim(),
-        'gemini-2.5-flash',
+        DEFAULT_GEMINI_MODEL,
         'gpt-4o-audio-preview',
       ].filter((m): m is string => Boolean(m));
 
