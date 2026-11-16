@@ -534,7 +534,7 @@ export function AiTutorView({
           <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-400">
             Chỉ tài khoản đã đăng nhập mới được sử dụng tính năng Chat AI và lưu lịch sử hội thoại. Mỗi tài khoản nhận sẵn{' '}
             <strong className="text-slate-900 dark:text-slate-100">10 lượt chat</strong> và{' '}
-            <strong className="text-slate-900 dark:text-slate-100">20 lượt luyện nói</strong> mỗi ngày!
+            <strong className="text-slate-900 dark:text-slate-100">5 lượt luyện nói</strong> mỗi ngày (tối đa 10 lượt nói khi làm nhiệm vụ)!
           </p>
 
           <div className="mt-6 flex flex-col justify-center gap-2.5 sm:flex-row">

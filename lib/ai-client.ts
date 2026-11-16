@@ -30,6 +30,10 @@ export function isAiConfigured(): boolean {
   return Boolean(process.env.LITEROUTER_API_KEY?.trim() || getValidGeminiKey());
 }
 
+export function isGeminiAudioConfigured(): boolean {
+  return Boolean(getValidGeminiKey());
+}
+
 export function normalizeAudioMimeType(rawMimeType: string): string {
   const base = rawMimeType.split(';')[0].trim().toLowerCase();
   if (base === 'audio/x-m4a' || base === 'video/mp4') return 'audio/mp4';
@@ -246,6 +250,90 @@ async function tryGeminiAudioTranscription(
   }
 
   return { ok: false, detail: lastDetail };
+}
+
+/**
+ * Gộp nghe âm thanh + chấm phát âm & ngữ pháp trong 1 lần gọi Gemini 4 Hydrogen duy nhất,
+ * giúp tiết kiệm ~50% số request và token so với tách 2 bước riêng.
+ */
+export async function evaluateAudioSpeechWithGemini(params: {
+  buffer: Buffer;
+  mimeType: string;
+  evaluationPrompt: string;
+}): Promise<
+  { ok: true; content: string } | { ok: false; status: number; error: string }
+> {
+  const geminiKey = getValidGeminiKey();
+  if (!geminiKey) {
+    return {
+      ok: false,
+      status: 503,
+      error: 'Chưa cấu hình GEMINI_API_KEY để xử lý âm thanh.',
+    };
+  }
+
+  const cleanMimeType = normalizeAudioMimeType(params.mimeType);
+  const base64Audio = params.buffer.toString('base64');
+  const ai = createGeminiClient(geminiKey);
+  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              mimeType: cleanMimeType,
+              data: base64Audio,
+            },
+          },
+          {
+            text: params.evaluationPrompt,
+          },
+        ],
+      },
+    });
+
+    const text = (response.text || '').trim();
+    if (!text) {
+      return {
+        ok: false,
+        status: 502,
+        error: 'Trợ lý AI trả về nội dung trống. Vui lòng thử lại.',
+      };
+    }
+
+    return { ok: true, content: text };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`Gemini single-call audio eval (${model}) failed:`, detail);
+
+    if (
+      detail.includes('401') ||
+      detail.includes('403') ||
+      detail.includes('API_KEY_INVALID')
+    ) {
+      return {
+        ok: false,
+        status: 502,
+        error:
+          'Khóa AI nghe âm thanh (GEMINI_API_KEY) chưa hợp lệ hoặc đã hết hạn.',
+      };
+    }
+    if (detail.includes('429') || detail.includes('RESOURCE_EXHAUSTED')) {
+      return {
+        ok: false,
+        status: 429,
+        error: 'Hệ thống AI xử lý âm thanh đang quá tải, vui lòng thử lại sau vài giây.',
+      };
+    }
+    return {
+      ok: false,
+      status: 502,
+      error: 'Máy chủ AI tạm thời chưa xử lý được bản ghi âm này. Vui lòng thử lại.',
+    };
+  }
 }
 
 async function tryOpenAiCompatibleWhisper(params: {

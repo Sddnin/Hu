@@ -149,7 +149,7 @@ export function MissionsView({
             3 nhiệm vụ mỗi ngày · Dễ, Vừa & Khó
           </h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Mỗi ngày có 3 nhiệm vụ (1 Dễ, 1 Vừa, 1 Khó). Hoàn thành để nhận thêm lượt Chat Qusin AI (mặc định 10 lượt/ngày) và Luyện nói AI (mặc định 20 lượt/ngày).
+            Mỗi ngày có 3 nhiệm vụ (1 Dễ, 1 Vừa, 1 Khó). Lượt Nói AI mặc định 5 lượt/ngày (làm đủ 3 nhiệm vụ nhận thêm tối đa +5 = 10 lượt/ngày), Chat Qusin AI mặc định 10 lượt/ngày.
           </p>
         </div>
 
@@ -295,7 +295,7 @@ export function MissionsView({
         <div className="mt-5 flex flex-col items-start justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50/80 p-4 dark:border-amber-900/60 dark:bg-amber-950/30 sm:flex-row sm:items-center">
           <div>
             <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
-              Đăng nhập để mở khóa 10 lượt Chat + 20 lượt Nói & nhận thưởng nhiệm vụ
+              Đăng nhập để mở khóa 10 lượt Chat + 5 lượt Nói & nhận thưởng nhiệm vụ
             </div>
             <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
               Mỗi ngày hệ thống giao 3 nhiệm vụ (Dễ · Vừa · Khó) để bạn nhận thêm lượt dùng AI miễn phí.

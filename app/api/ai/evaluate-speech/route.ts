@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isNeonConfigured } from '@/db';
 import {
   createLiteRouterCompletion,
+  evaluateAudioSpeechWithGemini,
+  isGeminiAudioConfigured,
   transcribeAudioWithAI,
 } from '@/lib/ai-client';
 import { consumeSpeakTurn, getOrCreateDailyQuota } from '@/lib/ai-quota';
@@ -31,7 +33,7 @@ function clampPercent(val: unknown, fallback: number): number {
 
 function parseSpeechEvaluation(
   raw: string,
-  heardTranscript: string,
+  fallbackHeardTranscript: string,
   fallbackSentence: string,
   fallbackMeaning: string
 ): SpeechEvalResult {
@@ -46,6 +48,13 @@ function parseSpeechEvaluation(
   if (jsonStart !== -1 && jsonEnd > jsonStart) {
     try {
       const obj = JSON.parse(cleaned.slice(jsonStart, jsonEnd + 1));
+      const rawHeard =
+        typeof obj.heardTranscript === 'string'
+          ? obj.heardTranscript.trim()
+          : fallbackHeardTranscript;
+      const heardTranscript =
+        rawHeard.includes('[NO_SPEECH]') ? '' : rawHeard;
+
       const score = clampPercent(obj.score, 75);
       const targetWordPercent = clampPercent(obj.targetWordPercent, score);
       const pronunciationPercent = clampPercent(obj.pronunciationPercent, score);
@@ -95,7 +104,7 @@ function parseSpeechEvaluation(
   }
 
   return {
-    heardTranscript,
+    heardTranscript: fallbackHeardTranscript,
     score: 75,
     targetWordPercent: 75,
     pronunciationPercent: 75,
@@ -137,7 +146,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            'Bạn đã dùng hết 20 lượt Luyện nói AI hôm nay. Hãy hoàn thành Nhiệm vụ để nhận thêm lượt!',
+            'Bạn đã dùng hết lượt Luyện nói AI hôm nay. Hãy hoàn thành Nhiệm vụ để nhận thêm lượt (tối đa 10 lượt/ngày)!',
           quota: currentQuota,
         },
         { status: 429 }
@@ -208,29 +217,6 @@ export async function POST(req: NextRequest) {
     }
 
     const audioBuffer = Buffer.from(await audioEntry.arrayBuffer());
-    const transcription = await transcribeAudioWithAI({
-      buffer: audioBuffer,
-      mimeType: audioEntry.type || 'audio/webm',
-    });
-
-    if (!transcription.ok) {
-      return NextResponse.json(
-        { error: transcription.error },
-        { status: transcription.status }
-      );
-    }
-
-    const heardTranscript = transcription.transcript.trim();
-    if (!heardTranscript) {
-      return NextResponse.json(
-        {
-          error:
-            'AI chưa nghe rõ giọng nói tiếng Anh trong bản ghi âm. Hãy kiểm tra micro và ghi âm lại to, rõ hơn nhé (lượt nói của bạn chưa bị trừ).',
-        },
-        { status: 422 }
-      );
-    }
-
     const expectedTarget =
       taskType === 'read_word'
         ? term
@@ -239,32 +225,112 @@ export async function POST(req: NextRequest) {
           : `Any natural English sentence correctly using "${term}"`;
 
     const audioDurationHint = durationSec
-      ? `\n- Recorded audio duration: ~${durationSec}s (processed directly from learner's microphone audio on server)`
-      : '\n- Processed directly from learner microphone audio recording on server';
+      ? `~${durationSec}s`
+      : 'short clip';
 
-    const systemPrompt = `You are Qusin AI, a precise and encouraging English pronunciation & speaking coach for Vietnamese learners.
-The learner recorded real microphone audio and our server AI transcribed the exact spoken sounds. Evaluate the learner's spoken English for this flashcard exercise.
-
-Flashcard details:
+    const sharedScoringRules = `Flashcard details:
 - Target word: "${term}" ${phonetic ? `(${phonetic})` : ''} ${partOfSpeech ? `[${partOfSpeech}]` : ''}
 - Vietnamese meaning: "${meaning}"
 - Example sentence: "${example || term}"
 - Task type: ${taskType === 'read_word' ? 'Pronounce the target word clearly' : taskType === 'read_example' ? 'Read the target word/example sentence aloud' : 'Create and speak an original English sentence using the target word'}
-- Expected reference: "${expectedTarget}"${audioDurationHint}
+- Expected reference: "${expectedTarget}"
+- Recorded duration: ${audioDurationHint}
 
 Scoring & Percentage Rules:
-1. "targetWordPercent" (0-100): How accurately the target word "${term}" was spoken/heard in the recording.
-2. "pronunciationPercent" (0-100): Overall pronunciation & fluency clarity across the spoken recording.
+1. "targetWordPercent" (0-100): How accurately the target word "${term}" was spoken.
+2. "pronunciationPercent" (0-100): Overall pronunciation, stress, ending sounds, and fluency clarity.
 3. "score" (0-100): Overall exercise score combining targetWordPercent, pronunciationPercent, and grammar/context accuracy.
 4. "passed": true if score >= 70 AND targetWordPercent >= 60, else false.
-5. "pronunciationGuide": Practical Vietnamese guide on HOW to pronounce "${term}" accurately — include syllable breakdown with UPPERCASE stress (e.g. "kə-LAB-ə-rayt"), rough Vietnamese sound hint (e.g. "cơ-LÁ-bơ-rết"), and which sound/ending consonant to focus on.
-6. "pronunciationNote": 1-2 Vietnamese sentences analyzing what the learner pronounced clearly and any specific sound/syllable to fix based on what AI heard from their recording.
+5. "pronunciationGuide": Practical Vietnamese guide on HOW to pronounce "${term}" accurately — include syllable breakdown with UPPERCASE stress (e.g. "kə-LAB-ə-rayt"), rough Vietnamese sound hint (e.g. "cơ-LÁ-bơ-rết"), and key sounds to focus on.
+6. "pronunciationNote": 1-2 Vietnamese sentences analyzing what the learner pronounced clearly and any specific sound/syllable to fix.
 7. "usageFeedback": 1-2 Vietnamese sentences checking grammar, naturalness, and meaning usage.
 8. "betterSentence": A natural, authentic English sentence using "${term}".
 9. "betterSentenceVi": Vietnamese translation of "betterSentence".
-10. Never mention any underlying model name or API details.
+10. Never mention any underlying model name or API details.`;
 
-Return ONLY valid JSON matching this schema (no markdown code fences):
+    let evaluation: SpeechEvalResult;
+
+    // Đường dẫn ưu tiên: Gộp nghe âm thanh + chấm phát âm vào 1 lần gọi Gemini 4 Hydrogen (giảm 50% request & token)
+    if (isGeminiAudioConfigured()) {
+      const combinedPrompt = `You are Qusin AI, a precise English pronunciation & speaking coach for Vietnamese learners.
+Listen directly to the attached audio recording of the learner speaking English.
+First, transcribe ONLY the exact words you hear without fixing mistakes into "heardTranscript" (if only silence or background noise with no intelligible speech, set "heardTranscript" to "").
+Then evaluate their real spoken pronunciation and sentence directly from the audio.
+
+${sharedScoringRules}
+
+Return ONLY valid JSON matching this schema (no markdown fences):
+{
+  "heardTranscript": "...",
+  "score": 88,
+  "targetWordPercent": 92,
+  "pronunciationPercent": 86,
+  "passed": true,
+  "pronunciationGuide": "...",
+  "pronunciationNote": "...",
+  "usageFeedback": "...",
+  "betterSentence": "...",
+  "betterSentenceVi": "..."
+}`;
+
+      const singleResult = await evaluateAudioSpeechWithGemini({
+        buffer: audioBuffer,
+        mimeType: audioEntry.type || 'audio/wav',
+        evaluationPrompt: combinedPrompt,
+      });
+
+      if (!singleResult.ok) {
+        return NextResponse.json(
+          { error: singleResult.error },
+          { status: singleResult.status }
+        );
+      }
+
+      evaluation = parseSpeechEvaluation(
+        singleResult.content,
+        '',
+        example || `I use "${term}" in daily English.`,
+        meaning
+      );
+
+      if (!evaluation.heardTranscript.trim()) {
+        return NextResponse.json(
+          {
+            error:
+              'AI chưa nghe rõ giọng nói tiếng Anh trong bản ghi âm. Hãy kiểm tra micro và ghi âm lại to, rõ hơn nhé (lượt nói của bạn chưa bị trừ).',
+          },
+          { status: 422 }
+        );
+      }
+    } else {
+      // Dự phòng nếu máy chủ chỉ cấu hình Groq/OpenAI + LiteRouter
+      const transcription = await transcribeAudioWithAI({
+        buffer: audioBuffer,
+        mimeType: audioEntry.type || 'audio/wav',
+      });
+
+      if (!transcription.ok) {
+        return NextResponse.json(
+          { error: transcription.error },
+          { status: transcription.status }
+        );
+      }
+
+      const heardTranscript = transcription.transcript.trim();
+      if (!heardTranscript) {
+        return NextResponse.json(
+          {
+            error:
+              'AI chưa nghe rõ giọng nói tiếng Anh trong bản ghi âm. Hãy kiểm tra micro và ghi âm lại to, rõ hơn nhé (lượt nói của bạn chưa bị trừ).',
+          },
+          { status: 422 }
+        );
+      }
+
+      const systemPrompt = `You are Qusin AI, a precise English pronunciation & speaking coach for Vietnamese learners.
+${sharedScoringRules}
+
+Return ONLY valid JSON matching this schema (no markdown fences):
 {
   "score": 88,
   "targetWordPercent": 92,
@@ -277,22 +343,30 @@ Return ONLY valid JSON matching this schema (no markdown code fences):
   "betterSentenceVi": "..."
 }`;
 
-    const result = await createLiteRouterCompletion({
-      messages: [
-        { role: 'system', content: systemPrompt },
-        {
-          role: 'user',
-          content: `Exact words heard from learner's recorded audio: "${heardTranscript}"`,
-        },
-      ],
-      temperature: 0.3,
-      maxTokens: 650,
-    });
+      const result = await createLiteRouterCompletion({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          {
+            role: 'user',
+            content: `Exact words heard from learner's recorded audio: "${heardTranscript}"`,
+          },
+        ],
+        temperature: 0.3,
+        maxTokens: 600,
+      });
 
-    if (!result.ok) {
-      return NextResponse.json(
-        { error: result.error },
-        { status: result.status }
+      if (!result.ok) {
+        return NextResponse.json(
+          { error: result.error },
+          { status: result.status }
+        );
+      }
+
+      evaluation = parseSpeechEvaluation(
+        result.content,
+        heardTranscript,
+        example || `I use "${term}" in daily English.`,
+        meaning
       );
     }
 
@@ -302,7 +376,7 @@ Return ONLY valid JSON matching this schema (no markdown code fences):
         return NextResponse.json(
           {
             error:
-              'Bạn đã dùng hết lượt Luyện nói AI hôm nay. Hãy hoàn thành Nhiệm vụ để nhận thêm lượt!',
+              'Bạn đã dùng hết lượt Luyện nói AI hôm nay. Hãy hoàn thành Nhiệm vụ để nhận thêm lượt (tối đa 10 lượt/ngày)!',
             quota: consumed.quota,
           },
           { status: 429 }
@@ -310,13 +384,6 @@ Return ONLY valid JSON matching this schema (no markdown code fences):
       }
       currentQuota = consumed.quota;
     }
-
-    const evaluation = parseSpeechEvaluation(
-      result.content,
-      heardTranscript,
-      example || `I use "${term}" in daily English.`,
-      meaning
-    );
 
     return NextResponse.json({
       ...evaluation,

@@ -158,7 +158,8 @@ export const LIMITS = {
   DAILY_GOAL_MIN: 5,
   DAILY_GOAL_MAX: 200,
   BASE_CHAT_LIMIT: 10,
-  BASE_SPEAK_LIMIT: 20,
+  BASE_SPEAK_LIMIT: 5,
+  MAX_SPEAK_LIMIT: 10,
 } as const;
 
 export const MODE_LABELS: Record<PracticeMode, string> = {

@@ -23,7 +23,10 @@ function buildQuotaSnapshot(row: {
   speakBonus: number;
 }): AiQuotaSnapshot {
   const chatLimit = LIMITS.BASE_CHAT_LIMIT + Math.max(0, row.chatBonus);
-  const speakLimit = LIMITS.BASE_SPEAK_LIMIT + Math.max(0, row.speakBonus);
+  const speakLimit = Math.min(
+    LIMITS.MAX_SPEAK_LIMIT,
+    LIMITS.BASE_SPEAK_LIMIT + Math.max(0, row.speakBonus)
+  );
   return {
     dateKey: row.dateKey,
     chatUsed: row.chatUsed,
@@ -136,7 +139,7 @@ export async function consumeSpeakTurn(
     .where(
       and(
         eq(userDailyQuotas.id, rowId),
-        drizzleSql`${userDailyQuotas.speakUsed} < ${LIMITS.BASE_SPEAK_LIMIT} + ${userDailyQuotas.speakBonus}`
+        drizzleSql`${userDailyQuotas.speakUsed} < LEAST(${LIMITS.MAX_SPEAK_LIMIT}, ${LIMITS.BASE_SPEAK_LIMIT} + ${userDailyQuotas.speakBonus})`
       )
     )
     .returning();

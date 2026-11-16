@@ -36,15 +36,15 @@ export const DIFFICULTY_LABELS: Record<MissionDifficulty, string> = {
 };
 
 export const DAILY_MISSIONS: DailyMissionDef[] = [
-  // MỨC DỄ (4 nhiệm vụ xoay vòng)
+  // MỨC DỄ (4 nhiệm vụ xoay vòng) — +1 Chat, +1 Nói
   {
     id: 'daily_login',
     difficulty: 'easy',
     title: 'Điểm danh đăng nhập hằng ngày',
     description:
       'Đăng nhập tài khoản để giữ chuỗi học tập và nhận lượt AI miễn phí mỗi ngày.',
-    chatReward: 2,
-    speakReward: 3,
+    chatReward: 1,
+    speakReward: 1,
     actionView: 'login',
     actionLabel: 'Đăng nhập ngay',
   },
@@ -54,8 +54,8 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     title: 'Khởi động 1 phiên luyện tập',
     description:
       'Hoàn thành ít nhất 1 phiên học hoặc trò chơi bất kỳ trong ngày hôm nay.',
-    chatReward: 2,
-    speakReward: 2,
+    chatReward: 1,
+    speakReward: 1,
     actionView: 'practice_any',
     actionLabel: 'Luyện tập ngay',
   },
@@ -65,8 +65,8 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     title: 'Ôn nhanh 10 lượt thẻ',
     description:
       'Luyện tập tổng cộng ít nhất 10 lượt từ vựng trong ngày hôm nay.',
-    chatReward: 2,
-    speakReward: 2,
+    chatReward: 1,
+    speakReward: 1,
     actionView: 'practice_any',
     actionLabel: 'Ôn thẻ ngay',
   },
@@ -77,20 +77,20 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     description:
       'Gắn sao ít nhất 3 thẻ từ vựng cần ghi nhớ trong thư viện bộ thẻ của bạn.',
     chatReward: 1,
-    speakReward: 3,
+    speakReward: 1,
     actionView: 'decks',
     actionLabel: 'Mở bộ thẻ',
   },
 
-  // MỨC VỪA (4 nhiệm vụ xoay vòng)
+  // MỨC VỪA (4 nhiệm vụ xoay vòng) — +1 Chat, +2 Nói
   {
     id: 'reach_daily_goal',
     difficulty: 'medium',
     title: 'Chinh phục mục tiêu ngày',
     description:
       'Hoàn thành đủ số lượt thẻ theo mục tiêu hằng ngày bạn đã đặt.',
-    chatReward: 3,
-    speakReward: 4,
+    chatReward: 1,
+    speakReward: 2,
     actionView: 'practice_any',
     actionLabel: 'Tiếp tục luyện',
   },
@@ -100,8 +100,8 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     title: 'Đa dạng 2 chế độ luyện tập',
     description:
       'Hoàn thành ít nhất 2 chế độ khác nhau hôm nay (ví dụ: Lật thẻ, Trắc nghiệm, Nối thẻ...).',
-    chatReward: 3,
-    speakReward: 4,
+    chatReward: 1,
+    speakReward: 2,
     actionView: 'practice_any',
     actionLabel: 'Đổi chế độ học',
   },
@@ -111,8 +111,8 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     title: 'Chiến binh Mini-Game từ vựng',
     description:
       'Hoàn thành 1 lượt chơi Xếp khối Blast, Bắn thiên thạch hoặc Xe tăng 3D hôm nay.',
-    chatReward: 3,
-    speakReward: 5,
+    chatReward: 1,
+    speakReward: 2,
     actionView: 'practice_game',
     actionLabel: 'Chơi Mini-Game',
   },
@@ -122,21 +122,21 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     title: 'Bền bỉ ôn 20 lượt thẻ',
     description:
       'Luyện tập đạt tổng cộng từ 20 lượt thẻ trở lên trong ngày hôm nay.',
-    chatReward: 3,
-    speakReward: 4,
+    chatReward: 1,
+    speakReward: 2,
     actionView: 'practice_any',
     actionLabel: 'Ôn tiếp 20 thẻ',
   },
 
-  // MỨC KHÓ (4 nhiệm vụ xoay vòng)
+  // MỨC KHÓ (4 nhiệm vụ xoay vòng) — +2 Chat, +2 Nói
   {
     id: 'high_accuracy_today',
     difficulty: 'hard',
     title: 'Chuẩn xác cao độ (≥ 85%)',
     description:
       'Đạt độ chính xác từ 85% trở lên trong 1 phiên luyện tập từ 5 thẻ trở lên hôm nay.',
-    chatReward: 5,
-    speakReward: 6,
+    chatReward: 2,
+    speakReward: 2,
     actionView: 'practice_quiz',
     actionLabel: 'Thử sức Trắc nghiệm',
   },
@@ -146,8 +146,8 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     title: 'Bứt phá 3 phiên & 40 lượt thẻ',
     description:
       'Hoàn thành ít nhất 3 phiên luyện tập với tổng từ 40 lượt thẻ trở lên hôm nay.',
-    chatReward: 5,
-    speakReward: 8,
+    chatReward: 2,
+    speakReward: 2,
     actionView: 'practice_any',
     actionLabel: 'Cày chuỗi học',
   },
@@ -157,8 +157,8 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     title: 'Thử thách Nói AI hoặc Kiểm tra',
     description:
       'Hoàn thành trọn vẹn 1 phiên Luyện nói AI (ghi âm) hoặc bài Kiểm tra tổng hợp hôm nay.',
-    chatReward: 6,
-    speakReward: 6,
+    chatReward: 2,
+    speakReward: 2,
     actionView: 'practice_speak_or_test',
     actionLabel: 'Vào Nói AI / Kiểm tra',
   },
@@ -168,8 +168,8 @@ export const DAILY_MISSIONS: DailyMissionDef[] = [
     title: 'Hoàn hảo 100% một phiên học',
     description:
       'Hoàn thành 1 phiên luyện tập từ 5 thẻ trở lên với độ chính xác tuyệt đối 100% hôm nay.',
-    chatReward: 6,
-    speakReward: 7,
+    chatReward: 2,
+    speakReward: 2,
     actionView: 'practice_quiz',
     actionLabel: 'Chinh phục 100%',
   },

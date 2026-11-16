@@ -464,7 +464,7 @@ export function AiSpeakMode({
           Đăng nhập để ghi âm luyện nói & chấm phát âm AI
         </h2>
         <p className="mt-1.5 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-          Mỗi tài khoản nhận sẵn <strong>20 lượt ghi âm luyện nói AI</strong> mỗi ngày và có thể hoàn thành 3 nhiệm vụ hằng ngày để nhận thêm lượt.
+          Mỗi tài khoản nhận sẵn <strong>5 lượt ghi âm luyện nói AI</strong> mỗi ngày và có thể làm 3 nhiệm vụ hằng ngày để nhận thêm tối đa <strong>10 lượt/ngày</strong>.
         </p>
         <div className="mt-5 flex flex-wrap justify-center gap-2">
           {onOpenAuth && (
