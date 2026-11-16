@@ -7,6 +7,7 @@ interface StarterCardInput {
   partOfSpeech: string;
   meaning: string;
   example: string;
+  tags?: string[];
 }
 
 interface StarterDeckInput {
@@ -103,6 +104,7 @@ const STARTER_DECKS_RAW: StarterDeckInput[] = [
         partOfSpeech: 'noun',
         meaning: 'sự đồng thuận chung của tập thể',
         example: 'After two hours of debate, the team reached a consensus.',
+        tags: ['công việc', 'họp nhóm'],
       },
       {
         id: 'card_biz_2',
@@ -111,6 +113,7 @@ const STARTER_DECKS_RAW: StarterDeckInput[] = [
         partOfSpeech: 'verb',
         meaning: 'ủy quyền, phân công nhiệm vụ',
         example: 'Effective leaders know how to delegate routine tasks wisely.',
+        tags: ['công việc', 'quản lý'],
       },
       {
         id: 'card_biz_3',
@@ -119,6 +122,7 @@ const STARTER_DECKS_RAW: StarterDeckInput[] = [
         partOfSpeech: 'noun',
         meaning: 'sản phẩm đầu ra, hạng mục bàn giao',
         example: 'The design prototype is our key deliverable for Friday.',
+        tags: ['công việc', 'dự án'],
       },
       {
         id: 'card_biz_4',
@@ -127,6 +131,7 @@ const STARTER_DECKS_RAW: StarterDeckInput[] = [
         partOfSpeech: 'verb',
         meaning: 'tận dụng tối đa lợi thế hoặc nguồn lực',
         example: 'We can leverage customer feedback to improve onboarding.',
+        tags: ['công việc', 'kinh doanh'],
       },
       {
         id: 'card_biz_5',
@@ -135,6 +140,7 @@ const STARTER_DECKS_RAW: StarterDeckInput[] = [
         partOfSpeech: 'verb',
         meaning: 'tinh gọn quy trình, tối ưu hóa',
         example: 'Automation helped streamline our monthly invoicing workflow.',
+        tags: ['công việc', 'quy trình'],
       },
       {
         id: 'card_biz_6',
@@ -143,6 +149,7 @@ const STARTER_DECKS_RAW: StarterDeckInput[] = [
         partOfSpeech: 'noun',
         meaning: 'các bên liên quan, người có quyền lợi liên đới',
         example: 'Every stakeholder received an updated project timeline.',
+        tags: ['công việc', 'dự án'],
       },
       {
         id: 'card_biz_7',
@@ -151,6 +158,7 @@ const STARTER_DECKS_RAW: StarterDeckInput[] = [
         partOfSpeech: 'adj',
         meaning: 'khả thi, có thể thực hiện được',
         example: 'Launching the beta version next month looks completely feasible.',
+        tags: ['công việc', 'họp nhóm'],
       },
       {
         id: 'card_biz_8',
@@ -159,6 +167,7 @@ const STARTER_DECKS_RAW: StarterDeckInput[] = [
         partOfSpeech: 'noun',
         meaning: 'tiêu chuẩn đối chiếu, cột mốc chuẩn',
         example: 'This release sets a new benchmark for application speed.',
+        tags: ['công việc', 'đánh giá'],
       },
     ],
   },
@@ -340,6 +349,7 @@ export function buildStarterData(ownerId = 'local'): {
         partOfSpeech: rawCard.partOfSpeech,
         meaning: rawCard.meaning,
         example: rawCard.example,
+        tags: rawCard.tags ? [...rawCard.tags] : [rawDeck.category.toLowerCase()],
         mastery: 'new',
         reviewCount: 0,
         correctCount: 0,

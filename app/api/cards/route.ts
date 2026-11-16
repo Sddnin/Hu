@@ -5,7 +5,7 @@ import { ensureNeonSchema, getDb, isNeonConfigured } from '@/db';
 import { mapCardRow, recomputeDeckStats } from '@/db/queries';
 import { decks, flashcards } from '@/db/schema';
 import { getAuthenticatedUserId } from '@/lib/auth';
-import { LIMITS } from '@/lib/types';
+import { LIMITS, normalizeTags } from '@/lib/types';
 
 function clamp(val: unknown, max: number): string {
   return typeof val === 'string' ? val.trim().slice(0, max) : '';
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
     type CardInsert = typeof flashcards.$inferInsert;
     const rowsToInsert: CardInsert[] = rawItems
-      .slice(0, 100)
+      .slice(0, 250)
       .map((item: Record<string, unknown>, idx: number): CardInsert | null => {
         const term = clamp(item.term, LIMITS.TERM_MAX);
         const meaning = clamp(item.meaning, LIMITS.MEANING_MAX);
@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
           partOfSpeech: clamp(item.partOfSpeech, LIMITS.POS_MAX),
           meaning,
           example: clamp(item.example, LIMITS.EXAMPLE_MAX),
+          tagsJson: JSON.stringify(normalizeTags(item.tags)),
           mastery: 'new',
           reviewCount: 0,
           correctCount: 0,

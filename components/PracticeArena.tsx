@@ -101,6 +101,8 @@ interface PracticeArenaProps {
   onChangeMode: (mode: PracticeMode) => void;
   poolFilter: PracticePoolFilter;
   onChangePoolFilter: (filter: PracticePoolFilter) => void;
+  tagFilter: string;
+  onChangeTagFilter: (tag: string) => void;
   leaderboardEntries: LeaderboardEntry[];
   onToggleStar: (card: Flashcard) => Promise<void>;
   onRecordResults: (params: {
@@ -168,6 +170,8 @@ export function PracticeArena({
   onChangeMode,
   poolFilter,
   onChangePoolFilter,
+  tagFilter,
+  onChangeTagFilter,
   leaderboardEntries,
   onToggleStar,
   onRecordResults,
@@ -206,19 +210,53 @@ export function PracticeArena({
     saved: boolean;
   } | null>(null);
 
+  const availableTags = useMemo(() => {
+    const counts = new Map<string, { tag: string; count: number }>();
+    for (const card of deckCards) {
+      for (const rawTag of card.tags || []) {
+        const key = rawTag.toLowerCase();
+        const existing = counts.get(key);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          counts.set(key, { tag: rawTag, count: 1 });
+        }
+      }
+    }
+    return Array.from(counts.values()).sort(
+      (a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'vi')
+    );
+  }, [deckCards]);
+
+  const effectiveTagFilter = useMemo(() => {
+    if (!tagFilter || tagFilter === 'all') return 'all';
+    const match = availableTags.find(
+      (t) => t.tag.toLowerCase() === tagFilter.toLowerCase()
+    );
+    return match ? match.tag : 'all';
+  }, [tagFilter, availableTags]);
+
+  const tagScopedCards = useMemo(() => {
+    if (effectiveTagFilter === 'all') return deckCards;
+    const target = effectiveTagFilter.toLowerCase();
+    return deckCards.filter((c) =>
+      (c.tags || []).some((t) => t.toLowerCase() === target)
+    );
+  }, [deckCards, effectiveTagFilter]);
+
   const practicePool = useMemo(() => {
     if (focusedMissedIds && focusedMissedIds.length > 0) {
       const missedSet = new Set(focusedMissedIds);
-      const missed = deckCards.filter((c) => missedSet.has(c.id));
+      const missed = tagScopedCards.filter((c) => missedSet.has(c.id));
       if (missed.length > 0) {
         if (smartShuffle) return smartShuffleCards(missed, shuffleSeed || 1);
         return shuffleSeed > 0 ? shuffleCards(missed, shuffleSeed) : missed;
       }
     }
 
-    let filtered = deckCards;
+    let filtered = tagScopedCards;
     if (poolFilter === 'priority') {
-      const highPriority = deckCards.filter(
+      const highPriority = tagScopedCards.filter(
         (c) =>
           c.mastery !== 'mastered' ||
           c.starred ||
@@ -229,13 +267,13 @@ export function PracticeArena({
       }
       return smartShuffleCards(filtered, shuffleSeed || 1);
     } else if (poolFilter === 'unmastered') {
-      const unm = deckCards.filter((c) => c.mastery !== 'mastered');
+      const unm = tagScopedCards.filter((c) => c.mastery !== 'mastered');
       if (unm.length > 0) filtered = unm;
     } else if (poolFilter === 'starred') {
-      const starred = deckCards.filter((c) => c.starred);
+      const starred = tagScopedCards.filter((c) => c.starred);
       if (starred.length > 0) filtered = starred;
     } else if (poolFilter === 'weak') {
-      const weak = deckCards.filter(
+      const weak = tagScopedCards.filter(
         (c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7
       );
       if (weak.length > 0) filtered = weak;
@@ -245,7 +283,7 @@ export function PracticeArena({
       return smartShuffleCards(filtered, shuffleSeed || 1);
     }
     return shuffleSeed > 0 ? shuffleCards(filtered, shuffleSeed) : filtered;
-  }, [deckCards, poolFilter, focusedMissedIds, smartShuffle, shuffleSeed]);
+  }, [tagScopedCards, poolFilter, focusedMissedIds, smartShuffle, shuffleSeed]);
 
   const deckLeaderboard = useMemo(() => {
     if (!activeDeck) return [];
@@ -454,8 +492,8 @@ export function PracticeArena({
     );
   }
 
-  const starredTotal = deckCards.filter((c) => c.starred).length;
-  const weakTotal = deckCards.filter(
+  const starredTotal = tagScopedCards.filter((c) => c.starred).length;
+  const weakTotal = tagScopedCards.filter(
     (c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7
   ).length;
   const lowerMasteryCount = practicePool.filter(
@@ -481,7 +519,9 @@ export function PracticeArena({
               <span>Quay lại bộ thẻ</span>
             </button>
             <div className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">
-              {activeDeck.title} · {practicePool.length} thẻ
+              {activeDeck.title}
+              {effectiveTagFilter !== 'all' ? ` · #${effectiveTagFilter}` : ''} ·{' '}
+              {practicePool.length} thẻ
               {focusedMissedIds ? ' (Đang ôn từ sai)' : ''}
             </div>
             <h1 className="mt-0.5 font-display text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
@@ -567,6 +607,27 @@ export function PracticeArena({
               <span>Xáo trộn</span>
             </button>
 
+            {availableTags.length > 0 && (
+              <select
+                aria-label="Lọc theo nhãn chủ đề"
+                value={effectiveTagFilter}
+                onChange={(e) => {
+                  onChangeTagFilter(e.target.value);
+                  resetSessionState(false, true);
+                }}
+                className="min-h-[38px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+              >
+                <option value="all">
+                  Chủ đề: Tất cả ({deckCards.length})
+                </option>
+                {availableTags.map((t) => (
+                  <option key={t.tag} value={t.tag}>
+                    #{t.tag} ({t.count})
+                  </option>
+                ))}
+              </select>
+            )}
+
             <select
               aria-label="Lọc thẻ luyện tập"
               value={poolFilter}
@@ -576,7 +637,7 @@ export function PracticeArena({
               }}
               className="min-h-[38px] rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 focus:border-sky-600 focus:outline-none dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
             >
-              <option value="all">Tất cả thẻ ({deckCards.length})</option>
+              <option value="all">Tất cả thẻ ({tagScopedCards.length})</option>
               <option value="priority">Thẻ ưu tiên cao</option>
               <option value="unmastered">Chỉ thẻ chưa thuộc</option>
               <option value="starred" disabled={starredTotal === 0}>
@@ -932,7 +993,9 @@ export function PracticeArena({
         </div>
       ) : (
         /* Active Practice Mode */
-        <div key={`${activeDeck.id}_${activeMode}_${sessionKey}`}>
+        <div
+          key={`${activeDeck.id}_${effectiveTagFilter}_${activeMode}_${sessionKey}`}
+        >
           {activeMode === 'flip' && (
             <FlipMode
               cards={practicePool}

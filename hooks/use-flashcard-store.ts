@@ -17,6 +17,7 @@ import {
   StreakLeaderboardEntry,
   StudySession,
   getTodayDateKey,
+  normalizeTags,
   sanitizeId,
 } from '@/lib/types';
 
@@ -150,6 +151,17 @@ function clampString(val: string, max: number): string {
   return val.trim().slice(0, max);
 }
 
+function normalizeStoredCards(list: unknown): Flashcard[] {
+  if (!Array.isArray(list)) return [];
+  return list.map((raw) => {
+    const item = raw as Flashcard & { tags?: unknown };
+    return {
+      ...item,
+      tags: normalizeTags(item.tags),
+    };
+  });
+}
+
 function createUniqueId(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 8);
   return sanitizeId(`${prefix}_${Date.now()}_${rand}`);
@@ -196,7 +208,7 @@ export function useFlashcardStore() {
 
       if (rawDecks && rawCards) {
         setDecks(JSON.parse(rawDecks));
-        setCards(JSON.parse(rawCards));
+        setCards(normalizeStoredCards(JSON.parse(rawCards)));
       } else {
         const starter = buildStarterData('local');
         setDecks(starter.decks);
@@ -338,7 +350,7 @@ export function useFlashcardStore() {
       if (cachedAccount) {
         setUser(cachedAccount.user);
         setDecks(cachedAccount.decks);
-        setCards(cachedAccount.cards);
+        setCards(normalizeStoredCards(cachedAccount.cards));
         setSessions(cachedAccount.sessions);
         if (typeof cachedAccount.user.dailyGoal === 'number') {
           setDailyGoal(cachedAccount.user.dailyGoal);
@@ -397,7 +409,7 @@ export function useFlashcardStore() {
         setNeonConfigured(Boolean(data.configured));
         if (data.user) {
           const nextDecks = Array.isArray(data.decks) ? data.decks : [];
-          const nextCards = Array.isArray(data.cards) ? data.cards : [];
+          const nextCards = normalizeStoredCards(data.cards);
           const nextSessions = Array.isArray(data.sessions) ? data.sessions : [];
           setUser(data.user);
           setDecks(nextDecks);
@@ -502,7 +514,7 @@ export function useFlashcardStore() {
         }
 
         const nextDecks = Array.isArray(data.decks) ? data.decks : [];
-        const nextCards = Array.isArray(data.cards) ? data.cards : [];
+        const nextCards = normalizeStoredCards(data.cards);
         const nextSessions = Array.isArray(data.sessions) ? data.sessions : [];
         setNeonConfigured(true);
         setUser(data.user);
@@ -565,7 +577,7 @@ export function useFlashcardStore() {
         }
 
         const nextDecks = Array.isArray(data.decks) ? data.decks : [];
-        const nextCards = Array.isArray(data.cards) ? data.cards : [];
+        const nextCards = normalizeStoredCards(data.cards);
         const nextSessions = Array.isArray(data.sessions) ? data.sessions : [];
         setNeonConfigured(true);
         setUser(data.user);
@@ -717,6 +729,7 @@ export function useFlashcardStore() {
         partOfSpeech: string;
         meaning: string;
         example: string;
+        tags?: string[];
       }
     ) => {
       const cardId = createUniqueId('card');
@@ -725,6 +738,7 @@ export function useFlashcardStore() {
       const partOfSpeech = clampString(input.partOfSpeech, LIMITS.POS_MAX);
       const meaning = clampString(input.meaning, LIMITS.MEANING_MAX);
       const example = clampString(input.example, LIMITS.EXAMPLE_MAX);
+      const tags = normalizeTags(input.tags);
       const now = Date.now();
 
       const existingDeckCards = cards.filter((c) => c.deckId === deckId);
@@ -742,6 +756,7 @@ export function useFlashcardStore() {
         partOfSpeech,
         meaning,
         example,
+        tags,
         mastery: 'new',
         reviewCount: 0,
         correctCount: 0,
@@ -770,6 +785,7 @@ export function useFlashcardStore() {
             partOfSpeech,
             meaning,
             example,
+            tags,
           },
           'Không thể lưu thẻ lên Neon.'
         );
@@ -778,7 +794,7 @@ export function useFlashcardStore() {
     [user, cards, syncMutation]
   );
 
-  // CRUD: Bulk Import Cards
+  // CRUD: Bulk Import Cards (supports up to IMPORT_BATCH_MAX via chunked API calls)
   const bulkAddCards = useCallback(
     async (
       deckId: string,
@@ -788,33 +804,45 @@ export function useFlashcardStore() {
         phonetic?: string;
         partOfSpeech?: string;
         example?: string;
+        tags?: string[] | string;
       }>
     ) => {
       if (items.length === 0) return;
-      const sliced = items.slice(0, 100);
+      const sliced = items.slice(0, LIMITS.IMPORT_BATCH_MAX);
       const existingDeckCards = cards.filter((c) => c.deckId === deckId);
-      const newCount = existingDeckCards.length + sliced.length;
+      const now = Date.now();
+
+      const created: Flashcard[] = sliced
+        .map((item, idx) => {
+          const term = clampString(item.term, LIMITS.TERM_MAX);
+          const meaning = clampString(item.meaning, LIMITS.MEANING_MAX);
+          if (!term || !meaning) return null;
+          return {
+            id: createUniqueId(`card_${idx}`),
+            deckId,
+            ownerId: user ? user.id : 'local',
+            term,
+            phonetic: clampString(item.phonetic || '', LIMITS.PHONETIC_MAX),
+            partOfSpeech: clampString(item.partOfSpeech || '', LIMITS.POS_MAX),
+            meaning,
+            example: clampString(item.example || '', LIMITS.EXAMPLE_MAX),
+            tags: normalizeTags(item.tags),
+            mastery: 'new' as MasteryLevel,
+            reviewCount: 0,
+            correctCount: 0,
+            starred: false,
+            createdAt: now + idx,
+            updatedAt: now + idx,
+          };
+        })
+        .filter((x): x is Flashcard => x !== null);
+
+      if (created.length === 0) return;
+
+      const newCount = existingDeckCards.length + created.length;
       const masteredCount = existingDeckCards.filter(
         (c) => c.mastery === 'mastered'
       ).length;
-      const now = Date.now();
-
-      const created: Flashcard[] = sliced.map((item, idx) => ({
-        id: createUniqueId(`card_${idx}`),
-        deckId,
-        ownerId: user ? user.id : 'local',
-        term: clampString(item.term, LIMITS.TERM_MAX),
-        phonetic: clampString(item.phonetic || '', LIMITS.PHONETIC_MAX),
-        partOfSpeech: clampString(item.partOfSpeech || '', LIMITS.POS_MAX),
-        meaning: clampString(item.meaning, LIMITS.MEANING_MAX),
-        example: clampString(item.example || '', LIMITS.EXAMPLE_MAX),
-        mastery: 'new',
-        reviewCount: 0,
-        correctCount: 0,
-        starred: false,
-        createdAt: now + idx,
-        updatedAt: now + idx,
-      }));
 
       setCards((prev) => [...prev, ...created]);
       setDecks((prev) =>
@@ -826,22 +854,27 @@ export function useFlashcardStore() {
       );
 
       if (user) {
-        await syncMutation(
-          '/api/cards',
-          'POST',
-          {
-            deckId,
-            items: created.map((c) => ({
-              id: c.id,
-              term: c.term,
-              phonetic: c.phonetic,
-              partOfSpeech: c.partOfSpeech,
-              meaning: c.meaning,
-              example: c.example,
-            })),
-          },
-          'Không thể nhập hàng loạt lên Neon.'
-        );
+        const CHUNK_SIZE = 150;
+        for (let offset = 0; offset < created.length; offset += CHUNK_SIZE) {
+          const chunk = created.slice(offset, offset + CHUNK_SIZE);
+          await syncMutation(
+            '/api/cards',
+            'POST',
+            {
+              deckId,
+              items: chunk.map((c) => ({
+                id: c.id,
+                term: c.term,
+                phonetic: c.phonetic,
+                partOfSpeech: c.partOfSpeech,
+                meaning: c.meaning,
+                example: c.example,
+                tags: c.tags,
+              })),
+            },
+            'Không thể nhập hàng loạt lên Neon.'
+          );
+        }
       }
     },
     [user, cards, syncMutation]
@@ -857,6 +890,7 @@ export function useFlashcardStore() {
         partOfSpeech: string;
         meaning: string;
         example: string;
+        tags?: string[];
       }
     ) => {
       const term = clampString(input.term, LIMITS.TERM_MAX);
@@ -864,6 +898,8 @@ export function useFlashcardStore() {
       const partOfSpeech = clampString(input.partOfSpeech, LIMITS.POS_MAX);
       const meaning = clampString(input.meaning, LIMITS.MEANING_MAX);
       const example = clampString(input.example, LIMITS.EXAMPLE_MAX);
+      const tags =
+        input.tags !== undefined ? normalizeTags(input.tags) : card.tags;
       const now = Date.now();
 
       setCards((prev) =>
@@ -876,6 +912,7 @@ export function useFlashcardStore() {
                 partOfSpeech,
                 meaning,
                 example,
+                tags,
                 updatedAt: now,
               }
             : c
@@ -886,7 +923,7 @@ export function useFlashcardStore() {
         await syncMutation(
           `/api/cards/${encodeURIComponent(card.id)}`,
           'PATCH',
-          { term, phonetic, partOfSpeech, meaning, example },
+          { term, phonetic, partOfSpeech, meaning, example, tags },
           'Không thể cập nhật thẻ trên Neon.'
         );
       }
@@ -1301,6 +1338,7 @@ export function useFlashcardStore() {
           phonetic?: string;
           partOfSpeech?: string;
           example?: string;
+          tags?: string[];
         }>;
       }>
     ): Promise<number> => {

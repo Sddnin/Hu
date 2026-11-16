@@ -42,6 +42,7 @@ interface AccountModalProps {
         phonetic?: string;
         partOfSpeech?: string;
         example?: string;
+        tags?: string[];
       }>;
     }>
   ) => Promise<number>;
@@ -169,6 +170,7 @@ export function AccountModal({
           partOfSpeech: c.partOfSpeech,
           meaning: c.meaning,
           example: c.example,
+          tags: c.tags,
         })),
       })),
     };

@@ -1,25 +1,28 @@
 'use client';
 
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, KeyboardEvent, useMemo, useState } from 'react';
 import {
   Check,
   Copy,
   Download,
   Edit3,
-  FileUp,
+  FileSpreadsheet,
   Layers,
   Pencil,
   Plus,
   RotateCcw,
   Search,
   Star,
+  Tag,
   Trash2,
   UploadCloud,
   Volume2,
   X,
   Zap,
 } from 'lucide-react';
+import { BulkImportModal } from '@/components/BulkImportModal';
 import { PracticePoolFilter } from '@/components/PracticeArena';
+import { downloadDeckCsv } from '@/lib/import-export';
 import { speakEnglish } from '@/lib/speech';
 import {
   AuthUser,
@@ -31,6 +34,7 @@ import {
   MASTERY_LABELS,
   MasteryLevel,
   PracticeMode,
+  normalizeTags,
 } from '@/lib/types';
 
 interface DecksViewProps {
@@ -42,7 +46,8 @@ interface DecksViewProps {
   onStartPractice: (
     deckId: string,
     mode: PracticeMode,
-    filter?: PracticePoolFilter
+    filter?: PracticePoolFilter,
+    tag?: string
   ) => void;
   onCreateDeck: (input: {
     title: string;
@@ -64,6 +69,7 @@ interface DecksViewProps {
       partOfSpeech: string;
       meaning: string;
       example: string;
+      tags?: string[];
     }
   ) => Promise<void>;
   onBulkAddCards: (
@@ -74,6 +80,7 @@ interface DecksViewProps {
       phonetic?: string;
       partOfSpeech?: string;
       example?: string;
+      tags?: string[] | string;
     }>
   ) => Promise<void>;
   onUpdateCard: (
@@ -84,6 +91,7 @@ interface DecksViewProps {
       partOfSpeech: string;
       meaning: string;
       example: string;
+      tags?: string[];
     }
   ) => Promise<void>;
   onDeleteCard: (card: Flashcard) => Promise<void>;
@@ -144,6 +152,7 @@ export function DecksView({
   const [masteryFilter, setMasteryFilter] = useState<
     'all' | MasteryLevel | 'starred' | 'weak'
   >('all');
+  const [selectedTag, setSelectedTag] = useState<string>('all');
 
   // Deck Modal state
   const [deckModalMode, setDeckModalMode] = useState<'create' | 'edit' | null>(
@@ -167,15 +176,73 @@ export function DecksView({
   const [partOfSpeech, setPartOfSpeech] = useState('noun');
   const [meaning, setMeaning] = useState('');
   const [example, setExample] = useState('');
+  const [cardTags, setCardTags] = useState<string[]>([]);
+  const [cardTagInput, setCardTagInput] = useState('');
 
   // Bulk import modal state
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
-  const [bulkText, setBulkText] = useState('');
-  const [bulkError, setBulkError] = useState<string | null>(null);
+
+  const deckTags = useMemo(() => {
+    const counts = new Map<string, { tag: string; count: number }>();
+    for (const card of activeCards) {
+      for (const rawTag of card.tags || []) {
+        const key = rawTag.toLowerCase();
+        const existing = counts.get(key);
+        if (existing) {
+          existing.count += 1;
+        } else {
+          counts.set(key, { tag: rawTag, count: 1 });
+        }
+      }
+    }
+    return Array.from(counts.values()).sort(
+      (a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'vi')
+    );
+  }, [activeCards]);
+
+  const effectiveTagFilter = useMemo(() => {
+    if (!selectedTag || selectedTag === 'all') return 'all';
+    const match = deckTags.find(
+      (t) => t.tag.toLowerCase() === selectedTag.toLowerCase()
+    );
+    return match ? match.tag : 'all';
+  }, [selectedTag, deckTags]);
+
+  const allLibraryTags = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const t of deckTags) {
+      const k = t.tag.toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        list.push(t.tag);
+      }
+    }
+    for (const deckCardList of Object.values(cardsByDeck)) {
+      for (const c of deckCardList) {
+        for (const rawTag of c.tags || []) {
+          const k = rawTag.toLowerCase();
+          if (!seen.has(k)) {
+            seen.add(k);
+            list.push(rawTag);
+          }
+        }
+      }
+    }
+    return list.slice(0, 16);
+  }, [deckTags, cardsByDeck]);
+
+  const tagScopedCards = useMemo(() => {
+    if (effectiveTagFilter === 'all') return activeCards;
+    const target = effectiveTagFilter.toLowerCase();
+    return activeCards.filter((c) =>
+      (c.tags || []).some((t) => t.toLowerCase() === target)
+    );
+  }, [activeCards, effectiveTagFilter]);
 
   const filteredCards = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return activeCards.filter((card) => {
+    return tagScopedCards.filter((card) => {
       if (masteryFilter === 'starred') {
         if (!card.starred) return false;
       } else if (masteryFilter === 'weak') {
@@ -192,10 +259,11 @@ export function DecksView({
       return (
         card.term.toLowerCase().includes(q) ||
         card.meaning.toLowerCase().includes(q) ||
-        card.example.toLowerCase().includes(q)
+        card.example.toLowerCase().includes(q) ||
+        (card.tags || []).some((t) => t.toLowerCase().includes(q))
       );
     });
-  }, [activeCards, searchQuery, masteryFilter]);
+  }, [tagScopedCards, searchQuery, masteryFilter]);
 
   function openCreateDeck() {
     setDeckModalMode('create');
@@ -238,6 +306,8 @@ export function DecksView({
     setPartOfSpeech('noun');
     setMeaning('');
     setExample('');
+    setCardTags(effectiveTagFilter !== 'all' ? [effectiveTagFilter] : []);
+    setCardTagInput('');
     setCardModalOpen(true);
   }
 
@@ -248,12 +318,35 @@ export function DecksView({
     setPartOfSpeech(card.partOfSpeech || 'noun');
     setMeaning(card.meaning);
     setExample(card.example);
+    setCardTags(card.tags || []);
+    setCardTagInput('');
     setCardModalOpen(true);
+  }
+
+  function commitCardTagInput(rawValue = cardTagInput) {
+    const additions = normalizeTags(rawValue);
+    if (additions.length === 0) return;
+    setCardTags((prev) => normalizeTags([...prev, ...additions]));
+    setCardTagInput('');
+  }
+
+  function handleTagInputKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      commitCardTagInput();
+    }
+  }
+
+  function removeCardTag(tagToRemove: string) {
+    setCardTags((prev) =>
+      prev.filter((t) => t.toLowerCase() !== tagToRemove.toLowerCase())
+    );
   }
 
   async function handleSaveCard(e: FormEvent) {
     e.preventDefault();
     if (!activeDeck || !term.trim() || !meaning.trim()) return;
+    const finalTags = normalizeTags([...cardTags, cardTagInput]);
     if (editingCard) {
       await onUpdateCard(editingCard, {
         term,
@@ -261,6 +354,7 @@ export function DecksView({
         partOfSpeech,
         meaning,
         example,
+        tags: finalTags,
       });
     } else {
       await onAddCard(activeDeck.id, {
@@ -269,56 +363,10 @@ export function DecksView({
         partOfSpeech,
         meaning,
         example,
+        tags: finalTags,
       });
     }
     setCardModalOpen(false);
-  }
-
-  async function handleBulkImport(e: FormEvent) {
-    e.preventDefault();
-    if (!activeDeck) return;
-    setBulkError(null);
-
-    const lines = bulkText
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean);
-
-    const parsed: Array<{
-      term: string;
-      meaning: string;
-      phonetic?: string;
-      partOfSpeech?: string;
-      example?: string;
-    }> = [];
-
-    for (const line of lines) {
-      const parts = line.includes('|')
-        ? line.split('|')
-        : line.includes('\t')
-          ? line.split('\t')
-          : line.split(' - ');
-      const cleaned = parts.map((p) => p.trim());
-      if (cleaned.length >= 2 && cleaned[0] && cleaned[1]) {
-        parsed.push({
-          term: cleaned[0],
-          meaning: cleaned[1],
-          phonetic: cleaned[2] || '',
-          example: cleaned[3] || '',
-        });
-      }
-    }
-
-    if (parsed.length === 0) {
-      setBulkError(
-        'Chưa nhận diện được thẻ hợp lệ. Dùng định dạng: từ | nghĩa | phiên âm | ví dụ'
-      );
-      return;
-    }
-
-    await onBulkAddCards(activeDeck.id, parsed);
-    setBulkText('');
-    setBulkModalOpen(false);
   }
 
   function handleExportDeck() {
@@ -339,11 +387,11 @@ export function DecksView({
 
   const totalCards = decks.reduce((sum, d) => sum + d.cardCount, 0);
   const totalMastered = decks.reduce((sum, d) => sum + d.masteredCount, 0);
-  const starredCount = activeCards.filter((c) => c.starred).length;
-  const weakCount = activeCards.filter(
+  const starredCount = tagScopedCards.filter((c) => c.starred).length;
+  const weakCount = tagScopedCards.filter(
     (c) => c.reviewCount > 0 && c.correctCount / c.reviewCount < 0.7
   ).length;
-  const priorityCount = activeCards.filter(
+  const priorityCount = tagScopedCards.filter(
     (c) =>
       c.mastery !== 'mastered' ||
       c.starred ||
@@ -572,6 +620,17 @@ export function DecksView({
                     <button
                       type="button"
                       disabled={activeCards.length === 0}
+                      onClick={() => downloadDeckCsv(activeDeck.title, activeCards)}
+                      title="Xuất file CSV (mở được trong Excel, kèm nhãn chủ đề)"
+                      className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
+                    >
+                      <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span className="hidden sm:inline">Xuất CSV</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={activeCards.length === 0}
                       onClick={handleExportDeck}
                       title="Xuất danh sách từ vựng (.txt)"
                       className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 whitespace-nowrap cursor-pointer"
@@ -684,31 +743,48 @@ export function DecksView({
                 <div className="flex flex-col gap-2.5 rounded-xl border border-sky-200 bg-sky-50/70 p-3.5 dark:border-sky-900/60 dark:bg-sky-950/25 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      Học ngay các thẻ ưu tiên cao
+                      {effectiveTagFilter !== 'all'
+                        ? `Luyện chủ đề #${effectiveTagFilter} (${tagScopedCards.length} thẻ)`
+                        : 'Học ngay các thẻ ưu tiên cao'}
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-400">
-                      {priorityCount > 0
-                        ? `Ưu tiên ${priorityCount} thẻ mới, hay sai & chưa thuộc với Xáo trộn thông minh.`
-                        : `Tất cả ${activeCards.length} thẻ đã thuộc — bắt đầu ôn lại nhanh ngay.`}
+                      {effectiveTagFilter !== 'all'
+                        ? `Đang lọc theo nhãn #${effectiveTagFilter} · Chọn bất kỳ chế độ bên dưới để luyện riêng chủ đề này.`
+                        : priorityCount > 0
+                          ? `Ưu tiên ${priorityCount} thẻ mới, hay sai & chưa thuộc với Xáo trộn thông minh.`
+                          : `Tất cả ${activeCards.length} thẻ đã thuộc — bắt đầu ôn lại nhanh ngay.`}
                     </p>
                   </div>
                   <button
                     type="button"
-                    disabled={activeCards.length === 0}
+                    disabled={tagScopedCards.length === 0}
                     onClick={() =>
-                      onStartPractice(activeDeck.id, 'learn', 'priority')
+                      onStartPractice(
+                        activeDeck.id,
+                        'learn',
+                        'priority',
+                        effectiveTagFilter
+                      )
                     }
                     className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl bg-sky-600 px-5 py-2 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <Zap className="h-4 w-4" aria-hidden="true" />
-                    <span>Luyện tập nhanh</span>
+                    <span>
+                      {effectiveTagFilter !== 'all'
+                        ? `Luyện #${effectiveTagFilter}`
+                        : 'Luyện tập nhanh'}
+                    </span>
                   </button>
                 </div>
 
                 {/* Practice Modes & Mini-Games Launcher Grid */}
                 <div className="pt-1">
                   <div className="mb-2.5 text-xs font-medium text-slate-500 dark:text-slate-400">
-                    Chọn chế độ học, trò chơi & kiểm tra:
+                    Chọn chế độ học, trò chơi & kiểm tra
+                    {effectiveTagFilter !== 'all'
+                      ? ` (theo chủ đề #${effectiveTagFilter})`
+                      : ''}
+                    :
                   </div>
                   <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
                     {(
@@ -728,8 +804,15 @@ export function DecksView({
                       <button
                         key={m.id}
                         type="button"
-                        disabled={activeCards.length === 0}
-                        onClick={() => onStartPractice(activeDeck.id, m.id)}
+                        disabled={tagScopedCards.length === 0}
+                        onClick={() =>
+                          onStartPractice(
+                            activeDeck.id,
+                            m.id,
+                            'all',
+                            effectiveTagFilter
+                          )
+                        }
                         className="group min-h-[60px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition-colors hover:border-sky-600 hover:bg-sky-50/70 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:bg-slate-950/60 dark:hover:border-sky-500 dark:hover:bg-sky-950/30 cursor-pointer"
                       >
                         <div className="text-sm font-semibold text-slate-900 group-hover:text-sky-700 dark:text-slate-100 dark:group-hover:text-sky-400 whitespace-nowrap">
@@ -767,8 +850,8 @@ export function DecksView({
                       onClick={() => setBulkModalOpen(true)}
                       className="inline-flex min-h-[42px] flex-1 sm:flex-initial items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 whitespace-nowrap cursor-pointer"
                     >
-                      <FileUp className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>Nhập nhanh</span>
+                      <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Nhập CSV / Excel</span>
                     </button>
 
                     <button
@@ -787,7 +870,7 @@ export function DecksView({
                   <div className="flex items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-800 dark:bg-slate-950">
                     {(
                       [
-                        { id: 'all', label: `Tất cả (${activeCards.length})` },
+                        { id: 'all', label: `Tất cả (${tagScopedCards.length})` },
                         { id: 'new', label: 'Mới' },
                         { id: 'learning', label: 'Đang học' },
                         { id: 'mastered', label: 'Đã thuộc' },
@@ -816,7 +899,12 @@ export function DecksView({
                         <button
                           type="button"
                           onClick={() =>
-                            onStartPractice(activeDeck.id, 'flip', 'starred')
+                            onStartPractice(
+                              activeDeck.id,
+                              'flip',
+                              'starred',
+                              effectiveTagFilter
+                            )
                           }
                           className="font-semibold text-amber-600 hover:underline dark:text-amber-400 whitespace-nowrap cursor-pointer"
                         >
@@ -827,7 +915,12 @@ export function DecksView({
                         <button
                           type="button"
                           onClick={() =>
-                            onStartPractice(activeDeck.id, 'learn', 'weak')
+                            onStartPractice(
+                              activeDeck.id,
+                              'learn',
+                              'weak',
+                              effectiveTagFilter
+                            )
                           }
                           className="font-semibold text-sky-600 hover:underline dark:text-sky-400 whitespace-nowrap cursor-pointer"
                         >
@@ -837,6 +930,66 @@ export function DecksView({
                     </div>
                   )}
                 </div>
+
+                {/* Topic Tag Filter Strip */}
+                {deckTags.length > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/50">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 dark:text-slate-400 mr-1">
+                        <Tag className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Chủ đề:</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTag('all')}
+                        className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
+                          effectiveTagFilter === 'all'
+                            ? 'border-slate-900 bg-slate-900 text-white dark:border-sky-500 dark:bg-sky-500 dark:text-slate-950'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
+                        }`}
+                      >
+                        Tất cả ({activeCards.length})
+                      </button>
+                      {deckTags.map((t) => {
+                        const active =
+                          effectiveTagFilter.toLowerCase() === t.tag.toLowerCase();
+                        return (
+                          <button
+                            key={t.tag}
+                            type="button"
+                            onClick={() =>
+                              setSelectedTag(active ? 'all' : t.tag)
+                            }
+                            className={`rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer ${
+                              active
+                                ? 'border-sky-600 bg-sky-600 text-white dark:border-sky-500 dark:bg-sky-500 dark:text-slate-950'
+                                : 'border-slate-200 bg-white text-slate-700 hover:border-sky-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
+                            }`}
+                          >
+                            #{t.tag} ({t.count})
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {effectiveTagFilter !== 'all' && tagScopedCards.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onStartPractice(
+                            activeDeck.id,
+                            'learn',
+                            'all',
+                            effectiveTagFilter
+                          )
+                        }
+                        className="text-xs font-semibold text-sky-600 hover:underline dark:text-sky-400 whitespace-nowrap cursor-pointer"
+                      >
+                        Luyện {tagScopedCards.length} thẻ #{effectiveTagFilter} →
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Cards List */}
@@ -893,6 +1046,33 @@ export function DecksView({
                         <p className="mt-1 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
                           “{card.example}”
                         </p>
+                      )}
+
+                      {card.tags && card.tags.length > 0 && (
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          {card.tags.map((tag) => {
+                            const active =
+                              effectiveTagFilter.toLowerCase() ===
+                              tag.toLowerCase();
+                            return (
+                              <button
+                                key={tag}
+                                type="button"
+                                onClick={() =>
+                                  setSelectedTag(active ? 'all' : tag)
+                                }
+                                title={`Lọc theo chủ đề #${tag}`}
+                                className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
+                                  active
+                                    ? 'border-sky-600 bg-sky-50 text-sky-700 dark:border-sky-500 dark:bg-sky-950/50 dark:text-sky-300'
+                                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-sky-400 hover:text-sky-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400 dark:hover:text-sky-300'
+                                }`}
+                              >
+                                #{tag}
+                              </button>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
 
@@ -1198,6 +1378,82 @@ export function DecksView({
                 />
               </div>
 
+              <div>
+                <label
+                  htmlFor="card-tags-input"
+                  className="block text-xs font-semibold text-slate-700 dark:text-slate-300"
+                >
+                  Nhãn chủ đề (nhập rồi nhấn Enter hoặc dấu phẩy)
+                </label>
+                {cardTags.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {cardTags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700 dark:border-sky-800 dark:bg-sky-950/50 dark:text-sky-300"
+                      >
+                        <span>#{tag}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeCardTag(tag)}
+                          aria-label={`Xóa nhãn ${tag}`}
+                          className="rounded hover:text-red-600 cursor-pointer"
+                        >
+                          <X className="h-3 w-3" aria-hidden="true" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-1.5 flex gap-2">
+                  <input
+                    id="card-tags-input"
+                    type="text"
+                    value={cardTagInput}
+                    onChange={(e) => setCardTagInput(e.target.value)}
+                    onKeyDown={handleTagInputKeyDown}
+                    placeholder="Ví dụ: công việc, du lịch..."
+                    className="min-h-[40px] flex-1 rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-sky-600 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => commitCardTagInput()}
+                    disabled={!cardTagInput.trim()}
+                    className="min-h-[40px] rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    Thêm nhãn
+                  </button>
+                </div>
+                {allLibraryTags.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Gợi ý:
+                    </span>
+                    {allLibraryTags
+                      .filter(
+                        (t) =>
+                          !cardTags.some(
+                            (existing) =>
+                              existing.toLowerCase() === t.toLowerCase()
+                          )
+                      )
+                      .slice(0, 8)
+                      .map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() =>
+                            setCardTags((prev) => normalizeTags([...prev, t]))
+                          }
+                          className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-600 hover:border-sky-400 hover:text-sky-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 cursor-pointer"
+                        >
+                          +{t}
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -1219,72 +1475,15 @@ export function DecksView({
         </div>
       )}
 
-      {/* Bulk Import Modal */}
-      {bulkModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-0 backdrop-blur-xs sm:items-center sm:p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="bulk-modal-title"
-        >
-          <div className="w-full max-w-lg rounded-t-2xl border border-slate-200 bg-white p-6 shadow-xl dark:border-slate-800 dark:bg-slate-900 sm:rounded-2xl">
-            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-300 dark:bg-slate-700 sm:hidden" />
-            <div className="flex items-center justify-between">
-              <h3
-                id="bulk-modal-title"
-                className="font-display text-lg font-bold text-slate-900 dark:text-slate-100"
-              >
-                Nhập nhanh nhiều thẻ từ vựng
-              </h3>
-              <button
-                type="button"
-                onClick={() => setBulkModalOpen(false)}
-                aria-label="Đóng"
-                className="inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-              Mỗi dòng một thẻ theo mẫu: <code className="font-mono-tabular">từ | nghĩa | phiên âm | ví dụ</code> (phiên âm và ví dụ là tùy chọn).
-            </p>
-
-            <form onSubmit={handleBulkImport} className="mt-4 space-y-4">
-              <textarea
-                rows={6}
-                value={bulkText}
-                onChange={(e) => setBulkText(e.target.value)}
-                placeholder={
-                  'ephemeral | ngắn ngủi, chóng tàn | /ɪˈfem.ər.əl/ | Fame can be ephemeral.\neloquent | hùng biện, lưu loát | /ˈel.ə.kwənt/ | She gave an eloquent speech.'
-                }
-                className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 py-2 font-mono-tabular text-xs text-slate-900 focus:border-sky-600 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-              />
-
-              {bulkError && (
-                <p className="text-xs font-medium text-red-600 dark:text-red-400">
-                  {bulkError}
-                </p>
-              )}
-
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setBulkModalOpen(false)}
-                  className="min-h-[44px] rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="min-h-[44px] rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400 cursor-pointer"
-                >
-                  Nhập thẻ vào bộ
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* CSV / Excel & Text Bulk Import Modal */}
+      {activeDeck && (
+        <BulkImportModal
+          open={bulkModalOpen}
+          deckTitle={activeDeck.title}
+          existingTags={allLibraryTags}
+          onClose={() => setBulkModalOpen(false)}
+          onImportCards={(items) => onBulkAddCards(activeDeck.id, items)}
+        />
       )}
 
       {/* Publish to Community Modal (with editable Description) */}
@@ -1331,6 +1530,7 @@ export function DecksView({
                     partOfSpeech: c.partOfSpeech,
                     meaning: c.meaning,
                     example: c.example,
+                    ...(c.tags && c.tags.length > 0 ? { tags: c.tags } : {}),
                   })),
                 });
                 setPublishingDeckId(null);

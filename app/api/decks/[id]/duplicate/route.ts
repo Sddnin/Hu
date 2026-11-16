@@ -86,6 +86,7 @@ export async function POST(
             partOfSpeech: c.partOfSpeech,
             meaning: c.meaning,
             example: c.example,
+            tagsJson: c.tagsJson,
             mastery: 'new',
             reviewCount: 0,
             correctCount: 0,

@@ -41,6 +41,7 @@ export interface Flashcard {
   partOfSpeech: string;
   meaning: string;
   example: string;
+  tags: string[];
   mastery: MasteryLevel;
   reviewCount: number;
   correctCount: number;
@@ -69,6 +70,7 @@ export interface CommunityCardItem {
   partOfSpeech: string;
   meaning: string;
   example: string;
+  tags?: string[];
 }
 
 export interface CommunityDeck {
@@ -126,6 +128,9 @@ export const LIMITS = {
   POS_MAX: 40,
   MEANING_MAX: 240,
   EXAMPLE_MAX: 350,
+  TAG_MAX: 32,
+  TAGS_PER_CARD_MAX: 8,
+  IMPORT_BATCH_MAX: 500,
   DISPLAY_NAME_MAX: 80,
   USERNAME_MIN: 3,
   USERNAME_MAX: 32,
@@ -160,6 +165,50 @@ export const MASTERY_LABELS: Record<MasteryLevel, string> = {
   learning: 'Đang học',
   mastered: 'Đã thuộc',
 };
+
+export function normalizeTags(raw: unknown): string[] {
+  let parts: string[] = [];
+
+  if (Array.isArray(raw)) {
+    parts = raw.filter((item): item is string => typeof item === 'string');
+  } else if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          parts = parsed.filter((item): item is string => typeof item === 'string');
+        }
+      } catch {
+        parts = trimmed.split(/[,;|#]/);
+      }
+    } else {
+      parts = trimmed.split(/[,;|#]/);
+    }
+  } else {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const rawPart of parts) {
+    const cleaned = rawPart
+      .replace(/^#+/, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, LIMITS.TAG_MAX);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(cleaned);
+    if (result.length >= LIMITS.TAGS_PER_CARD_MAX) break;
+  }
+
+  return result;
+}
 
 export function sanitizeId(raw: string): string {
   const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);

@@ -18,6 +18,7 @@ import {
   PracticeMode,
   StudySession,
   getTodayDateKey,
+  normalizeTags,
 } from '@/lib/types';
 
 function clampString(val: unknown, max: number): string {
@@ -159,6 +160,9 @@ export async function POST(req: NextRequest) {
           partOfSpeech: clampString(c.partOfSpeech, LIMITS.POS_MAX),
           meaning: clampString(c.meaning, LIMITS.MEANING_MAX) || 'nghĩa',
           example: clampString(c.example, LIMITS.EXAMPLE_MAX),
+          tagsJson: JSON.stringify(
+            normalizeTags((c as { tags?: unknown }).tags)
+          ),
           mastery,
           reviewCount,
           correctCount,

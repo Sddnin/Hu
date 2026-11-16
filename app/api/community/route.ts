@@ -10,7 +10,12 @@ import {
   uploadCommunityDeckBlob,
 } from '@/lib/blob';
 import { buildCommunityStarterDecks } from '@/lib/community-seed';
-import { CommunityCardItem, CommunityDeck, LIMITS } from '@/lib/types';
+import {
+  CommunityCardItem,
+  CommunityDeck,
+  LIMITS,
+  normalizeTags,
+} from '@/lib/types';
 
 function parseCardsJson(raw: string): CommunityCardItem[] {
   try {
@@ -155,28 +160,33 @@ export async function POST(req: NextRequest) {
           partOfSpeech?: unknown;
           meaning?: unknown;
           example?: unknown;
-        }) => ({
-          term:
-            typeof c?.term === 'string'
-              ? c.term.trim().slice(0, LIMITS.TERM_MAX)
-              : '',
-          phonetic:
-            typeof c?.phonetic === 'string'
-              ? c.phonetic.trim().slice(0, LIMITS.PHONETIC_MAX)
-              : '',
-          partOfSpeech:
-            typeof c?.partOfSpeech === 'string'
-              ? c.partOfSpeech.trim().slice(0, LIMITS.POS_MAX)
-              : '',
-          meaning:
-            typeof c?.meaning === 'string'
-              ? c.meaning.trim().slice(0, LIMITS.MEANING_MAX)
-              : '',
-          example:
-            typeof c?.example === 'string'
-              ? c.example.trim().slice(0, LIMITS.EXAMPLE_MAX)
-              : '',
-        })
+          tags?: unknown;
+        }) => {
+          const tags = normalizeTags(c?.tags);
+          return {
+            term:
+              typeof c?.term === 'string'
+                ? c.term.trim().slice(0, LIMITS.TERM_MAX)
+                : '',
+            phonetic:
+              typeof c?.phonetic === 'string'
+                ? c.phonetic.trim().slice(0, LIMITS.PHONETIC_MAX)
+                : '',
+            partOfSpeech:
+              typeof c?.partOfSpeech === 'string'
+                ? c.partOfSpeech.trim().slice(0, LIMITS.POS_MAX)
+                : '',
+            meaning:
+              typeof c?.meaning === 'string'
+                ? c.meaning.trim().slice(0, LIMITS.MEANING_MAX)
+                : '',
+            example:
+              typeof c?.example === 'string'
+                ? c.example.trim().slice(0, LIMITS.EXAMPLE_MAX)
+                : '',
+            ...(tags.length > 0 ? { tags } : {}),
+          };
+        }
       )
       .filter((c: CommunityCardItem) => c.term.length > 0 && c.meaning.length > 0);
 

@@ -79,6 +79,7 @@ export default function HomePage() {
   const [selectedDeckId, setSelectedDeckId] = useState<string>('');
   const [activeMode, setActiveMode] = useState<PracticeMode>('flip');
   const [poolFilter, setPoolFilter] = useState<PracticePoolFilter>('all');
+  const [tagFilter, setTagFilter] = useState<string>('all');
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalLoaded, setAuthModalLoaded] = useState(false);
   const [accountModalLoaded, setAccountModalLoaded] = useState(false);
@@ -152,11 +153,13 @@ export default function HomePage() {
   function handleStartPractice(
     deckId: string,
     mode: PracticeMode = 'flip',
-    filter: PracticePoolFilter = 'all'
+    filter: PracticePoolFilter = 'all',
+    tag = 'all'
   ) {
     setSelectedDeckId(deckId);
     setActiveMode(mode);
     setPoolFilter(filter);
+    setTagFilter(tag || 'all');
     setActiveView('practice');
   }
 
@@ -165,6 +168,7 @@ export default function HomePage() {
       setSelectedDeckId(effectiveSelectedDeckId);
     }
     setPoolFilter('all');
+    setTagFilter('all');
     setActiveView('practice');
   }
 
@@ -250,6 +254,8 @@ export default function HomePage() {
             onChangeMode={setActiveMode}
             poolFilter={poolFilter}
             onChangePoolFilter={setPoolFilter}
+            tagFilter={tagFilter}
+            onChangeTagFilter={setTagFilter}
             leaderboardEntries={store.leaderboardEntries}
             onToggleStar={store.toggleCardStar}
             onRecordResults={store.recordPracticeResults}

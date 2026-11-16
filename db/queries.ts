@@ -8,6 +8,7 @@ import {
   MasteryLevel,
   PracticeMode,
   StudySession,
+  normalizeTags,
 } from '@/lib/types';
 
 export function mapUserRow(row: typeof users.$inferSelect): AuthUser {
@@ -43,6 +44,7 @@ export function mapCardRow(row: typeof flashcards.$inferSelect): Flashcard {
     partOfSpeech: row.partOfSpeech,
     meaning: row.meaning,
     example: row.example,
+    tags: normalizeTags(row.tagsJson),
     mastery: (row.mastery as MasteryLevel) || 'new',
     reviewCount: row.reviewCount,
     correctCount: row.correctCount,

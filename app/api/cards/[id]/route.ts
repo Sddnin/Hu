@@ -4,7 +4,7 @@ import { ensureNeonSchema, getDb, isNeonConfigured } from '@/db';
 import { mapCardRow, recomputeDeckStats } from '@/db/queries';
 import { flashcards } from '@/db/schema';
 import { getAuthenticatedUserId } from '@/lib/auth';
-import { LIMITS } from '@/lib/types';
+import { LIMITS, normalizeTags } from '@/lib/types';
 
 function clamp(val: unknown, max: number): string {
   return typeof val === 'string' ? val.trim().slice(0, max) : '';
@@ -54,6 +54,9 @@ export async function PATCH(
     }
     if (typeof body.example === 'string') {
       patch.example = clamp(body.example, LIMITS.EXAMPLE_MAX);
+    }
+    if (body.tags !== undefined) {
+      patch.tagsJson = JSON.stringify(normalizeTags(body.tags));
     }
 
     const [updated] = await db

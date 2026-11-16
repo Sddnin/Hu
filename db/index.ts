@@ -89,6 +89,7 @@ export async function ensureNeonSchema(): Promise<void> {
           part_of_speech TEXT NOT NULL DEFAULT '',
           meaning TEXT NOT NULL,
           example TEXT NOT NULL DEFAULT '',
+          tags_json TEXT NOT NULL DEFAULT '[]',
           mastery TEXT NOT NULL DEFAULT 'new',
           review_count INTEGER NOT NULL DEFAULT 0,
           correct_count INTEGER NOT NULL DEFAULT 0,
@@ -96,6 +97,11 @@ export async function ensureNeonSchema(): Promise<void> {
           created_at BIGINT NOT NULL,
           updated_at BIGINT NOT NULL
         )
+      `;
+
+      await sql`
+        ALTER TABLE flashcards
+        ADD COLUMN IF NOT EXISTS tags_json TEXT NOT NULL DEFAULT '[]'
       `;
 
       await sql`

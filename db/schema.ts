@@ -50,6 +50,7 @@ export const flashcards = pgTable(
     partOfSpeech: text('part_of_speech').notNull().default(''),
     meaning: text('meaning').notNull(),
     example: text('example').notNull().default(''),
+    tagsJson: text('tags_json').notNull().default('[]'),
     mastery: text('mastery').notNull().default('new'),
     reviewCount: integer('review_count').notNull().default(0),
     correctCount: integer('correct_count').notNull().default(0),
