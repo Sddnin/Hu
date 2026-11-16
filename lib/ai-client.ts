@@ -7,7 +7,6 @@ export interface ChatMessageInput {
 
 const DEFAULT_BASE_URL = 'https://literouter.fun/api/v1';
 const DEFAULT_MODEL = 'deepseek-v4.1-flash-1017';
-const DEFAULT_AUDIO_MODEL = 'whisper-1';
 
 function getValidGeminiKey(): string | null {
   const key = process.env.GEMINI_API_KEY?.trim();
@@ -198,38 +197,25 @@ async function createGeminiTextFallback(
   }
 }
 
-export async function transcribeAudioWithAI(params: {
-  buffer: Buffer;
-  mimeType: string;
-}): Promise<
-  | { ok: true; transcript: string }
-  | { ok: false; status: number; error: string }
-> {
-  const cleanMimeType = normalizeAudioMimeType(params.mimeType);
-  const geminiKey = getValidGeminiKey();
-  const liteRouterKey = process.env.LITEROUTER_API_KEY?.trim();
+async function tryGeminiAudioTranscription(
+  geminiKey: string,
+  base64Audio: string,
+  mimeType: string
+): Promise<{ ok: true; transcript: string } | { ok: false; detail: string }> {
+  const ai = createGeminiClient(geminiKey);
+  const modelsToTry = ['gemini-3.5-transcribe', 'gemini-2.5-flash'];
+  let lastDetail = '';
 
-  if (!geminiKey && !liteRouterKey) {
-    return {
-      ok: false,
-      status: 503,
-      error:
-        'Máy chủ chưa cấu hình dịch vụ nhận diện giọng nói AI (GEMINI_API_KEY hoặc LITEROUTER_API_KEY).',
-    };
-  }
-
-  // 1. Primary path when GEMINI_API_KEY is available: transcribe recorded audio via gemini-3.5-transcribe
-  if (geminiKey) {
+  for (const model of modelsToTry) {
     try {
-      const ai = createGeminiClient(geminiKey);
       const response = await ai.models.generateContent({
-        model: 'gemini-3.5-transcribe',
+        model,
         contents: {
           parts: [
             {
               inlineData: {
-                mimeType: cleanMimeType,
-                data: params.buffer.toString('base64'),
+                mimeType,
+                data: base64Audio,
               },
             },
             {
@@ -240,74 +226,286 @@ export async function transcribeAudioWithAI(params: {
       });
 
       const rawTranscript = (response.text || '').trim();
-      if (rawTranscript && !rawTranscript.includes('[NO_SPEECH]')) {
-        return { ok: true, transcript: rawTranscript };
-      }
       if (rawTranscript.includes('[NO_SPEECH]')) {
         return { ok: true, transcript: '' };
       }
-    } catch (error) {
-      console.error('Audio transcription via Gemini failed:', error);
-      // Fall through to LiteRouter audio endpoint if configured
-      if (!liteRouterKey) {
-        return {
-          ok: false,
-          status: 502,
-          error: 'Không thể xử lý tệp ghi âm giọng nói lúc này. Vui lòng thử lại.',
-        };
+      if (rawTranscript) {
+        return { ok: true, transcript: rawTranscript };
       }
+      return { ok: true, transcript: '' };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      lastDetail = msg;
+      console.error(`Gemini audio transcription (${model}) failed:`, msg);
     }
   }
 
-  // 2. Fallback / Vercel path via LiteRouter Whisper-compatible endpoint
-  if (liteRouterKey) {
-    const baseUrl = (
-      process.env.LITEROUTER_BASE_URL?.trim() || DEFAULT_BASE_URL
-    ).replace(/\/+$/, '');
-    const audioModel =
-      process.env.LITEROUTER_AUDIO_MODEL?.trim() || DEFAULT_AUDIO_MODEL;
+  return { ok: false, detail: lastDetail };
+}
 
-    try {
-      const ext = extensionForMime(cleanMimeType);
-      const formData = new FormData();
-      const uint8 = new Uint8Array(params.buffer);
-      const blob = new Blob([uint8], { type: cleanMimeType });
-      formData.append('file', blob, `recording.${ext}`);
-      formData.append('model', audioModel);
-      formData.append('language', 'en');
+async function tryOpenAiCompatibleWhisper(params: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  buffer: Buffer;
+  mimeType: string;
+}): Promise<
+  { ok: true; transcript: string } | { ok: false; status: number; detail: string }
+> {
+  try {
+    const ext = extensionForMime(params.mimeType);
+    const formData = new FormData();
+    const uint8 = new Uint8Array(params.buffer);
+    const blob = new Blob([uint8], { type: params.mimeType });
+    formData.append('file', blob, `recording.${ext}`);
+    formData.append('model', params.model);
+    formData.append('language', 'en');
 
-      const res = await fetch(`${baseUrl}/audio/transcriptions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${liteRouterKey}`,
-        },
-        body: formData,
-        signal: AbortSignal.timeout(25000),
-      });
+    const res = await fetch(`${params.baseUrl.replace(/\/+$/, '')}/audio/transcriptions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${params.apiKey}`,
+      },
+      body: formData,
+      signal: AbortSignal.timeout(25000),
+    });
 
-      if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        console.error('LiteRouter audio transcription error:', res.status, errText);
-        return {
-          ok: false,
-          status: 502,
-          error:
-            'Không thể xử lý bản ghi âm trên máy chủ lúc này. Vui lòng thử ghi âm lại.',
-        };
-      }
-
-      const data = await res.json();
-      const text = typeof data?.text === 'string' ? data.text.trim() : '';
-      return { ok: true, transcript: text };
-    } catch (error) {
-      console.error('LiteRouter audio transcription fetch failed:', error);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
       return {
         ok: false,
-        status: 504,
-        error: 'Không thể gửi bản ghi âm tới máy chủ AI.',
+        status: res.status,
+        detail: errText.slice(0, 200),
       };
+    }
+
+    const data = await res.json();
+    const text = typeof data?.text === 'string' ? data.text.trim() : '';
+    return { ok: true, transcript: text };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 504,
+      detail: error instanceof Error ? error.message : 'Network error',
+    };
+  }
+}
+
+async function tryChatMultimodalAudio(params: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  base64Audio: string;
+  format: 'wav' | 'mp3';
+}): Promise<{ ok: true; transcript: string } | { ok: false; detail: string }> {
+  try {
+    const res = await fetch(
+      `${params.baseUrl.replace(/\/+$/, '')}/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${params.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: params.model,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: 'Transcribe ONLY the exact English words spoken in this audio without correcting mistakes. Reply with [NO_SPEECH] if silent.',
+                },
+                {
+                  type: 'input_audio',
+                  input_audio: {
+                    data: params.base64Audio,
+                    format: params.format,
+                  },
+                },
+              ],
+            },
+          ],
+          temperature: 0,
+          max_tokens: 200,
+        }),
+        signal: AbortSignal.timeout(25000),
+      }
+    );
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      return { ok: false, detail: `${res.status} ${errText.slice(0, 150)}` };
+    }
+
+    const data = await res.json();
+    const content = data?.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') {
+      return { ok: false, detail: 'Empty audio chat response' };
+    }
+    const cleaned = content.trim();
+    if (cleaned.includes('[NO_SPEECH]')) {
+      return { ok: true, transcript: '' };
+    }
+    return { ok: true, transcript: cleaned };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : 'Network error',
+    };
+  }
+}
+
+export async function transcribeAudioWithAI(params: {
+  buffer: Buffer;
+  mimeType: string;
+}): Promise<
+  | { ok: true; transcript: string }
+  | { ok: false; status: number; error: string }
+> {
+  const cleanMimeType = normalizeAudioMimeType(params.mimeType);
+  const base64Audio = params.buffer.toString('base64');
+
+  const geminiKey = getValidGeminiKey();
+  const groqKey = process.env.GROQ_API_KEY?.trim();
+  const openaiKey = process.env.OPENAI_API_KEY?.trim();
+  const customAudioKey = process.env.AUDIO_API_KEY?.trim();
+  const customAudioBaseUrl = process.env.AUDIO_BASE_URL?.trim();
+  const liteRouterKey = process.env.LITEROUTER_API_KEY?.trim();
+  const liteRouterBaseUrl = (
+    process.env.LITEROUTER_BASE_URL?.trim() || DEFAULT_BASE_URL
+  ).replace(/\/+$/, '');
+
+  // 1. Gemini audio transcription (gemini-3.5-transcribe -> gemini-2.5-flash fallback)
+  let geminiFailure = '';
+  if (geminiKey) {
+    const geminiRes = await tryGeminiAudioTranscription(
+      geminiKey,
+      base64Audio,
+      cleanMimeType
+    );
+    if (geminiRes.ok) {
+      return geminiRes;
+    }
+    geminiFailure = geminiRes.detail;
+  }
+
+  // 2. Optional dedicated Whisper APIs if user configured them (Groq free Whisper / OpenAI / custom)
+  if (customAudioKey && customAudioBaseUrl) {
+    const res = await tryOpenAiCompatibleWhisper({
+      baseUrl: customAudioBaseUrl,
+      apiKey: customAudioKey,
+      model: process.env.AUDIO_MODEL?.trim() || 'whisper-1',
+      buffer: params.buffer,
+      mimeType: cleanMimeType,
+    });
+    if (res.ok) return res;
+  }
+
+  if (groqKey) {
+    const res = await tryOpenAiCompatibleWhisper({
+      baseUrl: 'https://api.groq.com/openai/v1',
+      apiKey: groqKey,
+      model: 'whisper-large-v3-turbo',
+      buffer: params.buffer,
+      mimeType: cleanMimeType,
+    });
+    if (res.ok) return res;
+  }
+
+  if (openaiKey) {
+    const res = await tryOpenAiCompatibleWhisper({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: openaiKey,
+      model: 'whisper-1',
+      buffer: params.buffer,
+      mimeType: cleanMimeType,
+    });
+    if (res.ok) return res;
+  }
+
+  // 3. LiteRouter fallback: try multimodal audio via chat completions if wav/mp3, then custom audio model if specified
+  if (liteRouterKey) {
+    const audioFormat =
+      cleanMimeType === 'audio/wav'
+        ? 'wav'
+        : cleanMimeType === 'audio/mpeg'
+          ? 'mp3'
+          : null;
+
+    if (audioFormat) {
+      const candidates = [
+        process.env.LITEROUTER_AUDIO_MODEL?.trim(),
+        'gemini-2.5-flash',
+        'gpt-4o-audio-preview',
+      ].filter((m): m is string => Boolean(m));
+
+      for (const model of Array.from(new Set(candidates))) {
+        const chatAudioRes = await tryChatMultimodalAudio({
+          baseUrl: liteRouterBaseUrl,
+          apiKey: liteRouterKey,
+          model,
+          base64Audio,
+          format: audioFormat,
+        });
+        if (chatAudioRes.ok) {
+          return chatAudioRes;
+        }
+        console.error(
+          `LiteRouter multimodal audio (${model}) failed:`,
+          chatAudioRes.detail
+        );
+      }
+    }
+
+    if (process.env.LITEROUTER_AUDIO_MODEL?.trim()) {
+      const whisperRes = await tryOpenAiCompatibleWhisper({
+        baseUrl: liteRouterBaseUrl,
+        apiKey: liteRouterKey,
+        model: process.env.LITEROUTER_AUDIO_MODEL.trim(),
+        buffer: params.buffer,
+        mimeType: cleanMimeType,
+      });
+      if (whisperRes.ok) return whisperRes;
     }
   }
 
-  return { ok: true, transcript: '' };
+  // 4. Honest, actionable diagnostic message without leaking secrets/model names
+  if (!geminiKey && !groqKey && !openaiKey && !customAudioKey) {
+    return {
+      ok: false,
+      status: 503,
+      error:
+        'Máy chủ hiện mới có khóa Chat văn bản, chưa có khóa AI nghe giọng nói. Hãy thêm biến môi trường GEMINI_API_KEY (miễn phí từ Google AI Studio) hoặc GROQ_API_KEY vào Vercel/Secrets để AI xử lý bản ghi âm.',
+    };
+  }
+
+  if (
+    geminiFailure.includes('401') ||
+    geminiFailure.includes('403') ||
+    geminiFailure.includes('API_KEY_INVALID')
+  ) {
+    return {
+      ok: false,
+      status: 502,
+      error:
+        'Khóa AI nghe âm thanh (GEMINI_API_KEY) chưa hợp lệ hoặc đã hết hạn. Vui lòng kiểm tra lại cấu hình.',
+    };
+  }
+
+  if (geminiFailure.includes('429') || geminiFailure.includes('RESOURCE_EXHAUSTED')) {
+    return {
+      ok: false,
+      status: 429,
+      error: 'Hệ thống AI xử lý âm thanh đang quá tải, vui lòng thử lại sau vài giây.',
+    };
+  }
+
+  return {
+    ok: false,
+    status: 502,
+    error:
+      'Máy chủ AI tạm thời chưa giải mã được bản ghi âm này. Hãy kiểm tra kết nối hoặc thử ghi âm lại.',
+  };
 }

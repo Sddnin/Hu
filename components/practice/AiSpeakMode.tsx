@@ -17,6 +17,7 @@ import {
   Volume2,
   XCircle,
 } from 'lucide-react';
+import { convertBlobToWav } from '@/lib/audio-wav';
 import { speakEnglish } from '@/lib/speech';
 import { AiQuotaSnapshot, AuthUser, Flashcard } from '@/lib/types';
 import { PracticeResultItem } from './FlipMode';
@@ -261,21 +262,23 @@ export function AiSpeakMode({
         );
         const finalType =
           recorder.mimeType || preferredMime || 'audio/webm';
-        const blob = new Blob(chunksRef.current, { type: finalType });
+        const rawBlob = new Blob(chunksRef.current, { type: finalType });
         chunksRef.current = [];
 
-        if (blob.size < 300) {
+        if (rawBlob.size < 300) {
           setError(
             'Chưa thu được âm thanh từ micro. Hãy bấm ghi âm và nói rõ ít nhất 1 giây.'
           );
           return;
         }
 
-        const nextUrl = URL.createObjectURL(blob);
-        previewUrlRef.current = nextUrl;
-        setRecordedBlob(blob);
-        setRecordedSeconds(elapsedSec);
-        setAudioPreviewUrl(nextUrl);
+        void convertBlobToWav(rawBlob).then((finalBlob) => {
+          const nextUrl = URL.createObjectURL(finalBlob);
+          previewUrlRef.current = nextUrl;
+          setRecordedBlob(finalBlob);
+          setRecordedSeconds(elapsedSec);
+          setAudioPreviewUrl(nextUrl);
+        });
       };
 
       recorderRef.current = recorder;
