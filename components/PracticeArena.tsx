@@ -6,13 +6,17 @@ import {
   ArrowLeft,
   CheckCircle2,
   Clock,
+  Filter,
+  Play,
   RotateCcw,
+  Search,
   Shuffle,
   Sparkles,
   Star,
   Trophy,
   Volume2,
   VolumeX,
+  X,
   XCircle,
 } from 'lucide-react';
 import {
@@ -23,10 +27,12 @@ import {
   LEADERBOARD_MODE_LABELS,
   LeaderboardEntry,
   LeaderboardMode,
+  MASTERY_LABELS,
   MODE_LABELS,
   PracticeMode,
 } from '@/lib/types';
 import { prioritizeCards } from '@/lib/spaced-repetition';
+import { speakEnglish } from '@/lib/speech';
 import type { PracticeResultItem } from './practice/FlipMode';
 import type { PracticeCompletionMeta } from './practice/MatchMode';
 
@@ -161,6 +167,20 @@ function smartShuffleCards(list: Flashcard[], seed = 1): Flashcard[] {
   return prioritizeCards(list, seed);
 }
 
+function cardMatchesQuery(card: Flashcard, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  const q = normalizedQuery.startsWith('#')
+    ? normalizedQuery.slice(1)
+    : normalizedQuery;
+  if (!q) return true;
+  if (card.term.toLowerCase().includes(q)) return true;
+  if (card.meaning.toLowerCase().includes(q)) return true;
+  if ((card.phonetic || '').toLowerCase().includes(q)) return true;
+  if ((card.example || '').toLowerCase().includes(q)) return true;
+  if ((card.tags || []).some((t) => t.toLowerCase().includes(q))) return true;
+  return false;
+}
+
 function formatDuration(sec: number): string {
   const mins = Math.floor(sec / 60);
   const rem = sec % 60;
@@ -203,6 +223,11 @@ export function PracticeArena({
   const [smartShuffle, setSmartShuffle] = useState(true);
   const [showDeckLeaderboard, setShowDeckLeaderboard] = useState(false);
   const [deckLbModeFilter, setDeckLbModeFilter] = useState<'all' | LeaderboardMode>('all');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchScope, setSearchScope] = useState<'deck' | 'all'>('deck');
+  const [filterBySearch, setFilterBySearch] = useState(false);
+  const [pinnedCardId, setPinnedCardId] = useState<string | null>(null);
   const [focusedMissedIds, setFocusedMissedIds] = useState<string[] | null>(
     null
   );
@@ -220,6 +245,14 @@ export function PracticeArena({
     leaderboardSaved: boolean;
     saved: boolean;
   } | null>(null);
+
+  const deckTitleById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const d of decks) {
+      map.set(d.id, d.title);
+    }
+    return map;
+  }, [decks]);
 
   const availableTags = useMemo(() => {
     const counts = new Map<string, { tag: string; count: number }>();
@@ -255,13 +288,65 @@ export function PracticeArena({
     );
   }, [deckCards, effectiveTagFilter]);
 
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  const searchResults = useMemo(() => {
+    const source = searchScope === 'all' ? allCards : deckCards;
+    if (!normalizedSearch) {
+      return searchOpen ? source : [];
+    }
+    const matched = source.filter((c) => cardMatchesQuery(c, normalizedSearch));
+    matched.sort((a, b) => {
+      const aTerm = a.term.toLowerCase();
+      const bTerm = b.term.toLowerCase();
+      const aRank =
+        aTerm === normalizedSearch
+          ? 0
+          : aTerm.startsWith(normalizedSearch)
+            ? 1
+            : aTerm.includes(normalizedSearch)
+              ? 2
+              : 3;
+      const bRank =
+        bTerm === normalizedSearch
+          ? 0
+          : bTerm.startsWith(normalizedSearch)
+            ? 1
+            : bTerm.includes(normalizedSearch)
+              ? 2
+              : 3;
+      if (aRank !== bRank) return aRank - bRank;
+      return aTerm.localeCompare(bTerm);
+    });
+    return matched;
+  }, [allCards, deckCards, searchScope, normalizedSearch, searchOpen]);
+
+  const deckMatchingCards = useMemo(() => {
+    if (!normalizedSearch) return tagScopedCards;
+    return tagScopedCards.filter((c) => cardMatchesQuery(c, normalizedSearch));
+  }, [tagScopedCards, normalizedSearch]);
+
   const practicePool = useMemo(() => {
+    const pinTop = (list: Flashcard[]): Flashcard[] => {
+      if (!pinnedCardId || list.length <= 1) return list;
+      const idx = list.findIndex((c) => c.id === pinnedCardId);
+      if (idx <= 0) return list;
+      const copy = [...list];
+      const [pinned] = copy.splice(idx, 1);
+      copy.unshift(pinned);
+      return copy;
+    };
+
     if (focusedMissedIds && focusedMissedIds.length > 0) {
       const missedSet = new Set(focusedMissedIds);
       const missed = tagScopedCards.filter((c) => missedSet.has(c.id));
       if (missed.length > 0) {
-        if (smartShuffle) return smartShuffleCards(missed, shuffleSeed || 1);
-        return shuffleSeed > 0 ? shuffleCards(missed, shuffleSeed) : missed;
+        const ordered = smartShuffle
+          ? smartShuffleCards(missed, shuffleSeed || 1)
+          : shuffleSeed > 0
+            ? shuffleCards(missed, shuffleSeed)
+            : missed;
+        return pinTop(ordered);
       }
     }
 
@@ -276,7 +361,6 @@ export function PracticeArena({
       if (highPriority.length > 0) {
         filtered = highPriority;
       }
-      return smartShuffleCards(filtered, shuffleSeed || 1);
     } else if (poolFilter === 'unmastered') {
       const unm = tagScopedCards.filter((c) => c.mastery !== 'mastered');
       if (unm.length > 0) filtered = unm;
@@ -290,11 +374,28 @@ export function PracticeArena({
       if (weak.length > 0) filtered = weak;
     }
 
-    if (smartShuffle) {
-      return smartShuffleCards(filtered, shuffleSeed || 1);
+    if (filterBySearch && normalizedSearch) {
+      filtered = filtered.filter((c) => cardMatchesQuery(c, normalizedSearch));
     }
-    return shuffleSeed > 0 ? shuffleCards(filtered, shuffleSeed) : filtered;
-  }, [tagScopedCards, poolFilter, focusedMissedIds, smartShuffle, shuffleSeed]);
+
+    const ordered =
+      poolFilter === 'priority' || smartShuffle
+        ? smartShuffleCards(filtered, shuffleSeed || 1)
+        : shuffleSeed > 0
+          ? shuffleCards(filtered, shuffleSeed)
+          : filtered;
+
+    return pinTop(ordered);
+  }, [
+    tagScopedCards,
+    poolFilter,
+    focusedMissedIds,
+    smartShuffle,
+    shuffleSeed,
+    filterBySearch,
+    normalizedSearch,
+    pinnedCardId,
+  ]);
 
   const deckLeaderboard = useMemo(() => {
     if (!activeDeck) return [];
@@ -344,17 +445,68 @@ export function PracticeArena({
       .reduce((max, e) => Math.max(max, e.score), 0);
   }, [activeDeck, leaderboardEntries]);
 
-  const resetSessionState = (nextShuffle = false, clearMissed = true) => {
+  const resetSessionState = (
+    nextShuffle = false,
+    clearMissed = true,
+    clearPinned = true
+  ) => {
     if (nextShuffle) setShuffleSeed((s) => s + 1);
     if (clearMissed) setFocusedMissedIds(null);
+    if (clearPinned) setPinnedCardId(null);
     setSessionKey((k) => k + 1);
     setElapsedSeconds(0);
     setSummary(null);
   };
 
+  function handlePracticeSearchedCard(card: Flashcard) {
+    if (activeDeck && card.deckId !== activeDeck.id) {
+      onSelectDeck(card.deckId);
+      onChangeTagFilter('all');
+      onChangePoolFilter('all');
+    } else {
+      if (effectiveTagFilter !== 'all') {
+        onChangeTagFilter('all');
+      }
+      if (poolFilter !== 'all') {
+        onChangePoolFilter('all');
+      }
+    }
+    setFilterBySearch(false);
+    setPinnedCardId(card.id);
+    setSearchOpen(false);
+    setFocusedMissedIds(null);
+    setSessionKey((k) => k + 1);
+    setElapsedSeconds(0);
+    setSummary(null);
+  }
+
+  function handleToggleFilterBySearch() {
+    if (!normalizedSearch) return;
+    const next = !filterBySearch;
+    setFilterBySearch(next);
+    setPinnedCardId(null);
+    setFocusedMissedIds(null);
+    setSessionKey((k) => k + 1);
+    setElapsedSeconds(0);
+    setSummary(null);
+  }
+
+  function handleClearSearch() {
+    const wasFiltered = filterBySearch;
+    setSearchQuery('');
+    setFilterBySearch(false);
+    setSearchOpen(false);
+    if (wasFiltered) {
+      setSessionKey((k) => k + 1);
+      setElapsedSeconds(0);
+      setSummary(null);
+    }
+  }
+
   function handleToggleSmartShuffle() {
     const next = !smartShuffle;
     setSmartShuffle(next);
+    setPinnedCardId(null);
     if (next) {
       setShuffleSeed((s) => (s > 0 ? s + 1 : 1));
     } else {
@@ -533,6 +685,9 @@ export function PracticeArena({
               {activeDeck.title}
               {effectiveTagFilter !== 'all' ? ` · #${effectiveTagFilter}` : ''} ·{' '}
               {practicePool.length} thẻ
+              {filterBySearch && normalizedSearch
+                ? ` (Lọc: “${searchQuery.trim()}”)`
+                : ''}
               {focusedMissedIds ? ' (Đang ôn từ sai)' : ''}
             </div>
             <h1 className="mt-0.5 font-display text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl">
@@ -772,6 +927,260 @@ export function PracticeArena({
             </select>
           </div>
         </div>
+
+        {/* Thẻ tìm từ nhanh trong tab Luyện tập */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative flex-1">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                aria-hidden="true"
+              />
+              <input
+                type="search"
+                aria-label="Tìm từ trong tab luyện tập"
+                value={searchQuery}
+                onFocus={() => setSearchOpen(true)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSearchQuery(val);
+                  if (val.trim()) {
+                    setSearchOpen(true);
+                  } else if (filterBySearch) {
+                    setFilterBySearch(false);
+                    setSessionKey((k) => k + 1);
+                  }
+                }}
+                placeholder="Tìm từ vựng, nghĩa Việt, phiên âm, ví dụ hoặc #nhãn để luyện ngay..."
+                className="min-h-[40px] w-full rounded-xl border border-slate-200 bg-slate-50/70 py-1.5 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-600 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:bg-slate-950 sm:text-sm"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={handleClearSearch}
+                  aria-label="Xóa tìm kiếm"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              <div
+                role="group"
+                aria-label="Phạm vi tìm từ"
+                className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-800 dark:bg-slate-950"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchScope('deck');
+                    setSearchOpen(true);
+                  }}
+                  className={`min-h-[34px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                    searchScope === 'deck'
+                      ? 'bg-white text-sky-700 shadow-xs dark:bg-slate-800 dark:text-sky-400'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Bộ này ({deckCards.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchScope('all');
+                    setSearchOpen(true);
+                  }}
+                  className={`min-h-[34px] rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                    searchScope === 'all'
+                      ? 'bg-white text-sky-700 shadow-xs dark:bg-slate-800 dark:text-sky-400'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Tất cả ({allCards.length})
+                </button>
+              </div>
+
+              {normalizedSearch && (
+                <button
+                  type="button"
+                  onClick={handleToggleFilterBySearch}
+                  className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-xl border px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                    filterBySearch
+                      ? 'border-sky-600 bg-sky-600 text-white dark:border-sky-500 dark:bg-sky-500 dark:text-slate-950'
+                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-sky-500 hover:text-sky-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200'
+                  }`}
+                >
+                  <Filter className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>
+                    {filterBySearch
+                      ? `Đang lọc (${deckMatchingCards.length})`
+                      : `Lọc luyện (${deckMatchingCards.length})`}
+                  </span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setSearchOpen((v) => !v)}
+                className="min-h-[36px] rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                {searchOpen ? 'Thu gọn' : 'Danh sách từ'}
+              </button>
+            </div>
+          </div>
+
+          {/* Active Search Filter Notice */}
+          {filterBySearch && normalizedSearch && !searchOpen && (
+            <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-sky-200 bg-sky-50/70 px-3 py-2 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200">
+              <span>
+                Đang luyện <strong>{practicePool.length}</strong> thẻ khớp từ khóa{' '}
+                “{searchQuery.trim()}”.
+              </span>
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="font-semibold text-sky-700 underline hover:no-underline dark:text-sky-400 cursor-pointer"
+              >
+                Hiện lại toàn bộ thẻ
+              </button>
+            </div>
+          )}
+
+          {/* Expandable Word Search Results List */}
+          {searchOpen && (
+            <div className="mt-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <span>
+                  {normalizedSearch
+                    ? `Tìm thấy ${searchResults.length} từ khớp “${searchQuery.trim()}”`
+                    : `Danh sách nhanh (${Math.min(searchResults.length, 30)}/${searchResults.length} thẻ)`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSearchOpen(false)}
+                  className="font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  Đóng bảng tìm từ
+                </button>
+              </div>
+
+              {searchResults.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-5 text-center text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-950/50 dark:text-slate-400">
+                  Không tìm thấy từ nào khớp “{searchQuery.trim()}”{' '}
+                  {searchScope === 'deck' ? 'trong bộ thẻ hiện tại' : 'trong thư viện'}.
+                  {searchScope === 'deck' && allCards.length > deckCards.length && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchScope('all')}
+                      className="ml-2 font-semibold text-sky-600 underline hover:no-underline dark:text-sky-400 cursor-pointer"
+                    >
+                      Tìm ở tất cả bộ thẻ
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="max-h-72 divide-y divide-slate-200 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50/40 dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-950/40">
+                  {searchResults.slice(0, 30).map((card) => {
+                    const cardDeckTitle = deckTitleById.get(card.deckId);
+                    const isPinned = pinnedCardId === card.id;
+                    return (
+                      <div
+                        key={card.id}
+                        className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between hover:bg-white dark:hover:bg-slate-900/80 transition-colors"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="font-display text-sm font-bold text-slate-900 dark:text-slate-100">
+                              {card.term}
+                            </span>
+                            {card.phonetic && (
+                              <span className="font-mono-tabular text-xs text-slate-500 dark:text-slate-400">
+                                {card.phonetic}
+                              </span>
+                            )}
+                            {card.partOfSpeech && (
+                              <span className="text-[11px] italic text-slate-400">
+                                ({card.partOfSpeech})
+                              </span>
+                            )}
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                                card.mastery === 'mastered'
+                                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                  : card.mastery === 'learning'
+                                    ? 'bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300'
+                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                              }`}
+                            >
+                              {MASTERY_LABELS[card.mastery]}
+                            </span>
+                            {searchScope === 'all' && cardDeckTitle && (
+                              <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                                {cardDeckTitle}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-0.5 text-xs text-slate-700 dark:text-slate-300">
+                            {card.meaning}
+                          </p>
+                          {card.example && (
+                            <p className="mt-0.5 truncate text-[11px] italic text-slate-500 dark:text-slate-400">
+                              “{card.example}”
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => speakEnglish(card.term)}
+                            aria-label={`Phát âm ${card.term}`}
+                            title="Nghe phát âm"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-sky-500 hover:text-sky-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 cursor-pointer"
+                          >
+                            <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void onToggleStar(card)}
+                            aria-label={`Gắn sao ${card.term}`}
+                            title="Gắn sao"
+                            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border bg-white dark:bg-slate-900 cursor-pointer ${
+                              card.starred
+                                ? 'border-amber-300 text-amber-500 dark:border-amber-700 dark:text-amber-400'
+                                : 'border-slate-200 text-slate-400 hover:text-amber-500 dark:border-slate-700'
+                            }`}
+                          >
+                            <Star
+                              className={`h-3.5 w-3.5 ${
+                                card.starred ? 'fill-current' : ''
+                              }`}
+                              aria-hidden="true"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handlePracticeSearchedCard(card)}
+                            className={`inline-flex min-h-[32px] items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer ${
+                              isPinned
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-sky-600 text-white hover:bg-sky-700 dark:bg-sky-500 dark:text-slate-950 dark:hover:bg-sky-400'
+                            }`}
+                          >
+                            <Play className="h-3 w-3 fill-current" aria-hidden="true" />
+                            <span>{isPinned ? 'Đang luyện' : 'Luyện từ này'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Inline Deck Leaderboard Panel */}
@@ -872,18 +1281,47 @@ export function PracticeArena({
 
       {/* Empty Deck Guard */}
       {practicePool.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center dark:border-slate-800 dark:bg-slate-900">
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-            Bộ thẻ “{activeDeck.title}” chưa có từ vựng nào để luyện tập.
-          </p>
-          <button
-            type="button"
-            onClick={onBackToDecks}
-            className="mt-4 min-h-[44px] rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 cursor-pointer"
-          >
-            Thêm thẻ vào bộ này
-          </button>
-        </div>
+        filterBySearch && normalizedSearch ? (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+              Không tìm thấy thẻ nào khớp với từ khóa “{searchQuery.trim()}” trong bộ “{activeDeck.title}”.
+            </p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {allCards.length > deckCards.length && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchScope('all');
+                    setSearchOpen(true);
+                  }}
+                  className="min-h-[42px] rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                >
+                  Tìm trên tất cả bộ thẻ
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleClearSearch}
+                className="min-h-[42px] rounded-xl bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700 cursor-pointer"
+              >
+                Xóa bộ lọc tìm kiếm
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center dark:border-slate-800 dark:bg-slate-900">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+              Bộ thẻ “{activeDeck.title}” chưa có từ vựng nào để luyện tập.
+            </p>
+            <button
+              type="button"
+              onClick={onBackToDecks}
+              className="mt-4 min-h-[44px] rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 cursor-pointer"
+            >
+              Thêm thẻ vào bộ này
+            </button>
+          </div>
+        )
       ) : summary ? (
         /* Session Complete Summary */
         <div className="mx-auto max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900 sm:p-8">
@@ -1159,7 +1597,7 @@ export function PracticeArena({
           )}
 
           <div
-            key={`${activeDeck.id}_${effectiveTagFilter}_${activeMode}_${sessionKey}`}
+            key={`${activeDeck.id}_${effectiveTagFilter}_${activeMode}_${filterBySearch ? normalizedSearch : ''}_${pinnedCardId || ''}_${sessionKey}`}
           >
             {activeMode === 'flip' && (
               <FlipMode
