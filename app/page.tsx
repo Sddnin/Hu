@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Globe, Layers } from 'lucide-react';
+import { Bot, Globe, Layers, Target } from 'lucide-react';
 import type { AccountTab } from '@/components/AccountModal';
 import { Header } from '@/components/Header';
 import { MobileBottomNav } from '@/components/MobileBottomNav';
@@ -343,35 +343,76 @@ export default function HomePage() {
             onUpdateAiQuota={store.updateAiQuota}
             onGoToMissions={() => setActiveView('missions')}
           />
-        ) : activeView === 'ai' ? (
-          <AiTutorView
-            user={store.user}
-            decks={store.decks}
-            cardsByDeck={store.cardsByDeck}
-            allCards={store.cards}
-            aiQuota={store.aiQuota}
-            onUpdateQuota={store.updateAiQuota}
-            onOpenAuth={handleOpenAuth}
-            onGoToMissions={() => setActiveView('missions')}
-          />
-        ) : activeView === 'missions' ? (
-          <MissionsView
-            user={store.user}
-            cards={store.cards}
-            sessions={store.sessions}
-            dailyGoal={store.dailyGoal}
-            aiQuota={store.aiQuota}
-            claimedMissionIds={store.claimedMissionIds}
-            loading={store.missionsLoading}
-            onRefresh={store.refreshMissionsAndQuota}
-            onClaimMission={store.claimMission}
-            onExecuteAction={handleMissionAction}
-            onOpenChatAi={() => setActiveView('ai')}
-            onOpenSpeakPractice={() =>
-              handleStartPractice(effectiveSelectedDeckId, 'speak')
-            }
-            onOpenAuth={handleOpenAuth}
-          />
+        ) : activeView === 'ai' || activeView === 'missions' ? (
+          <div>
+            <div className="mx-auto max-w-7xl px-4 pt-5 sm:px-6">
+              <div
+                role="tablist"
+                aria-label="Phân mục Chat AI và Nhiệm vụ"
+                className="inline-flex w-full max-w-md rounded-2xl border border-slate-200 bg-slate-100/90 p-1 dark:border-slate-800 dark:bg-slate-900"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeView === 'ai'}
+                  onClick={() => setActiveView('ai')}
+                  className={`flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors sm:text-sm cursor-pointer ${
+                    activeView === 'ai'
+                      ? 'bg-white text-sky-700 shadow-xs dark:bg-slate-800 dark:text-sky-400'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  <Bot className="h-4 w-4" aria-hidden="true" />
+                  <span>Chat AI</span>
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeView === 'missions'}
+                  onClick={() => setActiveView('missions')}
+                  className={`flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-xl px-3 py-1.5 text-xs font-bold transition-colors sm:text-sm cursor-pointer ${
+                    activeView === 'missions'
+                      ? 'bg-white text-sky-700 shadow-xs dark:bg-slate-800 dark:text-sky-400'
+                      : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                  }`}
+                >
+                  <Target className="h-4 w-4" aria-hidden="true" />
+                  <span>Nhiệm vụ</span>
+                </button>
+              </div>
+            </div>
+
+            {activeView === 'ai' ? (
+              <AiTutorView
+                user={store.user}
+                decks={store.decks}
+                cardsByDeck={store.cardsByDeck}
+                allCards={store.cards}
+                aiQuota={store.aiQuota}
+                onUpdateQuota={store.updateAiQuota}
+                onOpenAuth={handleOpenAuth}
+                onGoToMissions={() => setActiveView('missions')}
+              />
+            ) : (
+              <MissionsView
+                user={store.user}
+                cards={store.cards}
+                sessions={store.sessions}
+                dailyGoal={store.dailyGoal}
+                aiQuota={store.aiQuota}
+                claimedMissionIds={store.claimedMissionIds}
+                loading={store.missionsLoading}
+                onRefresh={store.refreshMissionsAndQuota}
+                onClaimMission={store.claimMission}
+                onExecuteAction={handleMissionAction}
+                onOpenChatAi={() => setActiveView('ai')}
+                onOpenSpeakPractice={() =>
+                  handleStartPractice(effectiveSelectedDeckId, 'speak')
+                }
+                onOpenAuth={handleOpenAuth}
+              />
+            )}
+          </div>
         ) : (
           <LeaderboardStreakView
             decks={store.decks}

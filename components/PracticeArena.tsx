@@ -832,16 +832,15 @@ export function PracticeArena({
                   targetMode: 'flip' as PracticeMode,
                 },
                 {
-                  id: 'study_quiz',
-                  label: 'Học & Trắc nghiệm',
-                  isActive: activeMode === 'learn' || activeMode === 'quiz',
+                  id: 'study_practice',
+                  label: 'Học & Thực hành',
+                  isActive:
+                    activeMode === 'learn' ||
+                    activeMode === 'quiz' ||
+                    activeMode === 'fill' ||
+                    activeMode === 'spell' ||
+                    activeMode === 'speak',
                   targetMode: 'learn' as PracticeMode,
-                },
-                {
-                  id: 'fill_spell',
-                  label: 'Điền từ & Nghe viết',
-                  isActive: activeMode === 'fill' || activeMode === 'spell',
-                  targetMode: 'fill' as PracticeMode,
                 },
                 {
                   id: 'match',
@@ -850,28 +849,13 @@ export function PracticeArena({
                   targetMode: 'match' as PracticeMode,
                 },
                 {
-                  id: 'speak',
-                  label: 'Luyện nói AI',
-                  isActive: activeMode === 'speak',
-                  targetMode: 'speak' as PracticeMode,
-                },
-                {
-                  id: 'blast',
-                  label: 'Xếp khối Blast',
-                  isActive: activeMode === 'blast',
+                  id: 'minigame',
+                  label: 'Mini Game',
+                  isActive:
+                    activeMode === 'blast' ||
+                    activeMode === 'meteor' ||
+                    activeMode === 'tank',
                   targetMode: 'blast' as PracticeMode,
-                },
-                {
-                  id: 'meteor',
-                  label: 'Bắn thiên thạch',
-                  isActive: activeMode === 'meteor',
-                  targetMode: 'meteor' as PracticeMode,
-                },
-                {
-                  id: 'tank',
-                  label: 'Xe tăng 3D',
-                  isActive: activeMode === 'tank',
-                  targetMode: 'tank' as PracticeMode,
                 },
                 {
                   id: 'test',
@@ -1490,9 +1474,13 @@ export function PracticeArena({
       ) : (
         /* Active Practice Mode */
         <div>
-          {(activeMode === 'learn' || activeMode === 'quiz') && (
-            <div className="mx-auto mb-5 max-w-2xl rounded-2xl border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-800 dark:bg-slate-900">
-              <div className="grid grid-cols-2 gap-1.5">
+          {(activeMode === 'learn' ||
+            activeMode === 'quiz' ||
+            activeMode === 'fill' ||
+            activeMode === 'spell' ||
+            activeMode === 'speak') && (
+            <div className="mx-auto mb-5 max-w-4xl rounded-2xl border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-5">
                 {(
                   [
                     {
@@ -1504,6 +1492,21 @@ export function PracticeArena({
                       id: 'quiz' as const,
                       title: 'Trắc nghiệm',
                       subtitle: 'Chọn nhanh 4 đáp án',
+                    },
+                    {
+                      id: 'fill' as const,
+                      title: 'Điền từ',
+                      subtitle: 'Hoàn thành câu ví dụ',
+                    },
+                    {
+                      id: 'spell' as const,
+                      title: 'Nghe & Viết',
+                      subtitle: 'Luyện nghe và chính tả',
+                    },
+                    {
+                      id: 'speak' as const,
+                      title: 'Luyện nói AI',
+                      subtitle: 'Ghi âm & chấm phát âm',
                     },
                   ] as const
                 ).map((sub) => {
@@ -1519,6 +1522,8 @@ export function PracticeArena({
                         }
                       }}
                       className={`rounded-xl px-3 py-2 text-left transition-colors cursor-pointer ${
+                        sub.id === 'speak' ? 'col-span-2 sm:col-span-1' : ''
+                      } ${
                         selected
                           ? 'bg-white shadow-xs dark:bg-slate-800'
                           : 'text-slate-600 hover:bg-white/60 dark:text-slate-400 dark:hover:bg-slate-800/60'
@@ -1543,20 +1548,27 @@ export function PracticeArena({
             </div>
           )}
 
-          {(activeMode === 'fill' || activeMode === 'spell') && (
-            <div className="mx-auto mb-5 max-w-2xl rounded-2xl border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-800 dark:bg-slate-900">
-              <div className="grid grid-cols-2 gap-1.5">
+          {(activeMode === 'blast' ||
+            activeMode === 'meteor' ||
+            activeMode === 'tank') && (
+            <div className="mx-auto mb-5 max-w-3xl rounded-2xl border border-slate-200 bg-slate-100/80 p-1.5 dark:border-slate-800 dark:bg-slate-900">
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
                 {(
                   [
                     {
-                      id: 'fill' as const,
-                      title: 'Điền từ',
-                      subtitle: 'Hoàn thành câu ví dụ',
+                      id: 'blast' as const,
+                      title: 'Xếp khối Blast',
+                      subtitle: 'Ghép khối & trả lời từ vựng',
                     },
                     {
-                      id: 'spell' as const,
-                      title: 'Nghe & Viết',
-                      subtitle: 'Luyện nghe và chính tả',
+                      id: 'meteor' as const,
+                      title: 'Bắn thiên thạch',
+                      subtitle: 'Bắn hạ thiên thạch đúng nghĩa',
+                    },
+                    {
+                      id: 'tank' as const,
+                      title: 'Xe tăng 3D',
+                      subtitle: 'Lái xe tăng phá cổng từ vựng',
                     },
                   ] as const
                 ).map((sub) => {

@@ -11,8 +11,7 @@ interface HeaderProps {
 const NAV_ITEMS: Array<{ id: AppView; label: string }> = [
   { id: 'decks', label: 'Bộ thẻ & Kho' },
   { id: 'practice', label: 'Luyện tập' },
-  { id: 'ai', label: 'Chat AI' },
-  { id: 'missions', label: 'Nhiệm vụ' },
+  { id: 'ai', label: 'AI & Nhiệm vụ' },
   { id: 'leaderboard', label: 'BXH & Chuỗi' },
 ];
 
@@ -40,7 +39,9 @@ export function Header({
             const isActive =
               item.id === 'decks'
                 ? activeView === 'decks' || activeView === 'community'
-                : activeView === item.id;
+                : item.id === 'ai'
+                  ? activeView === 'ai' || activeView === 'missions'
+                  : activeView === item.id;
             return (
               <button
                 key={item.id}
